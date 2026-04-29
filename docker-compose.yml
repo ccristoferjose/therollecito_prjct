@@ -1,0 +1,83 @@
+services:
+  # ---------------------------------------------------------------------------
+  # MySQL 8.x
+  # ---------------------------------------------------------------------------
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: admin123
+      MYSQL_DATABASE: restaurant_ordering
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # SQL files mounted to /sql/ (NOT initdb.d — to avoid double execution).
+      # The init.sh script runs them in order via the mysql client,
+      # which properly handles DELIMITER for stored procedures.
+      - ./backend/database/schema.sql:/sql/01-schema.sql:ro
+      - ./backend/database/stored_procedures.sql:/sql/02-stored_procedures.sql:ro
+      - ./backend/database/seed.sql:/sql/03-seed.sql:ro
+      - ./backend/database/init.sh:/docker-entrypoint-initdb.d/00-init.sh:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # Backend (Node.js + Express)
+  # ---------------------------------------------------------------------------
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./backend/.env:/app/.env:ro
+      # Dev: bind-mount source so nodemon picks up file changes without a rebuild.
+      - ./backend/src:/app/src
+      - ./backend/database:/app/database:ro
+    environment:
+      # DB connection (Docker-specific — overrides .env)
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: admin123
+      DB_NAME: restaurant_ordering
+      DB_CONNECTION_LIMIT: 10
+      CORS_ORIGIN: http://localhost:5173
+      # Everything else (PORT, NODE_ENV, JWT, Firebase, Stripe)
+      # is loaded from backend/.env mounted above.
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Frontend (Vite dev server)
+  # Hot-reloads from the host bind-mount. Proxies /api and /socket.io
+  # to the backend service over the Docker network.
+  # ---------------------------------------------------------------------------
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    volumes:
+      # Bind-mount ONLY source for HMR — we deliberately do NOT mount
+      # /app or /app/node_modules from the host, so the image's native
+      # linux binaries (rollup etc.) stay intact. When you change a
+      # package.json dep, rerun `docker compose up --build`.
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.js:/app/vite.config.js
+    environment:
+      VITE_PROXY_TARGET: http://backend:3001
+      CHOKIDAR_USEPOLLING: "true"
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:
