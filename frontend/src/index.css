@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   The Rollecito — Design Tokens (Tailwind v4 CSS theme)
+   Warm bakery palette inspired by cinnamon rolls & fresh-baked goods.
+   ============================================================================ */
+
+@theme {
+  /* Primary — cinnamon brown for buttons + accents */
+  --color-primary: #A86A4A;
+  --color-primary-light: #F2D6B3;
+  --color-primary-dark: #4A3A35;
+
+  /* Accent — soft orange for call-to-action emphasis */
+  --color-accent: #F4A261;
+  --color-accent-light: #FFF1DC;
+  --color-accent-hover: #E76F51;
+
+  /* Surfaces */
+  --color-background: #FFF1DC;
+  --color-surface: #FFFFFF;
+  --color-surface-warm: #F2D6B3;
+  --color-surface-caramel: #D98C5F;
+  --color-border: #E8D4BE;
+
+  /* Text */
+  --color-text: #4A3A35;
+  --color-text-secondary: #7A5C4F;
+  --color-text-inverse: #FFF1DC;
+
+  /* Status */
+  --color-success: #6B8E4E;
+  --color-warning: #E9A84C;
+  --color-error: #E76F51;
+
+  /* Fonts — rounded sans-serif family */
+  --font-sans: 'Nunito', 'Quicksand', ui-rounded, 'Inter', system-ui, sans-serif;
+
+  /* Shadows — soft, no harsh depth */
+  --shadow-card: 0 2px 8px -2px rgb(74 58 53 / 0.08), 0 1px 3px -1px rgb(74 58 53 / 0.06);
+  --shadow-elevated: 0 10px 30px -8px rgb(74 58 53 / 0.15), 0 4px 12px -4px rgb(74 58 53 / 0.10);
+  --shadow-warm: 0 8px 24px -6px rgb(168 106 74 / 0.25);
+}
+
+/* Base resets */
+body {
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  background-color: var(--color-background);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Soft float animation for the hero mascot */
+@keyframes float {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50%      { transform: translateY(-12px) rotate(2deg); }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
