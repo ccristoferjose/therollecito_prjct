@@ -11,6 +11,11 @@ const pool = mysql.createPool({
   waitForConnections: true,
   multipleStatements: false,
   namedPlaceholders: false,
+  // Use the Node process's local TZ for DATETIME literal serialization. With
+  // `TZ` set in docker-compose to match the restaurant's timezone, this keeps
+  // mysql2, MySQL session, and JS `new Date()` all on the same clock — so
+  // pickup_time validation (`NOW()`, `CURTIME()`) compares correctly.
+  timezone: 'local',
   // MySQL DECIMAL columns return strings by default — convert to JS numbers
   typeCast: function (field, next) {
     if (field.type === 'NEWDECIMAL' || field.type === 'DECIMAL') {

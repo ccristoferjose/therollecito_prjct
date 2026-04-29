@@ -66,6 +66,12 @@ CREATE TABLE location (
   state        VARCHAR(100)  NOT NULL,
   zip_code     VARCHAR(20)   NOT NULL,
   phone        VARCHAR(20)   NULL,
+  -- Daily service window. NULL = always-on (orderable any time, no schedule).
+  -- When set, orders with pickup_time must fall within [open_time, close_time]
+  -- on the current day, and the client may schedule a pickup if the current
+  -- time is before open_time.
+  open_time    TIME          NULL,
+  close_time   TIME          NULL,
   is_active    TINYINT(1)    NOT NULL DEFAULT 1,
 
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -2,11 +2,12 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   CreditCard, ChefHat, Bell, CheckCircle, Package,
-  MapPin, Clock, ArrowRight, Search, ShoppingBag,
+  MapPin, Clock, ArrowRight, Search, ShoppingBag, Navigation,
 } from 'lucide-react';
 import { useLang } from '@shared/context/LangContext';
 import { useClientAuth } from '@shared/context/ClientAuthContext';
 import { useSocket } from '@shared/hooks/useSocket';
+import { useFetch } from '@shared/hooks/useFetch';
 import { api } from '@shared/utils/api';
 import { formatCurrency, formatTime, formatDate, formatOrderNumber } from '@shared/utils/format';
 import { getGuestOrders, removeGuestOrder } from '@shared/utils/guestOrders';
@@ -15,6 +16,69 @@ import Button from '@shared/components/Button';
 import Input from '@shared/components/Input';
 import Badge from '@shared/components/Badge';
 import Spinner from '@shared/components/Spinner';
+import Modal from '@shared/components/Modal';
+
+// ---------------------------------------------------------------------------
+// Directions: build deep links to the user's preferred maps app.
+// Address-based; lat/lng would be more precise but the locations table
+// doesn't store coordinates today.
+// ---------------------------------------------------------------------------
+function buildDirectionsUrls(location) {
+  if (!location) return null;
+  const addr = [location.address, location.city, location.state, location.zip_code]
+    .filter(Boolean).join(', ');
+  const q = encodeURIComponent(addr);
+  return {
+    address: addr,
+    google: `https://www.google.com/maps/dir/?api=1&destination=${q}`,
+    apple: `https://maps.apple.com/?daddr=${q}&dirflg=d`,
+    waze: `https://www.waze.com/ul?q=${q}&navigate=yes`,
+  };
+}
+
+function DirectionsModal({ open, onClose, location }) {
+  const urls = buildDirectionsUrls(location);
+  if (!urls) return null;
+
+  // Open in a new tab so the user doesn't lose the tracking page on mobile.
+  // noopener/noreferrer prevents the new tab from referencing window.opener.
+  const openIn = (url) => {
+    window.open(url, '_blank', 'noopener,noreferrer');
+    onClose();
+  };
+
+  const options = [
+    { key: 'google', label: 'Google Maps', sub: 'maps.google.com', emoji: '🗺️' },
+    { key: 'apple',  label: 'Apple Maps',  sub: 'maps.apple.com',  emoji: '🧭' },
+    { key: 'waze',   label: 'Waze',        sub: 'waze.com',        emoji: '🚗' },
+  ];
+
+  return (
+    <Modal open={open} onClose={onClose} title="Get directions">
+      <p className="text-sm text-text-secondary mb-4">
+        Pick your preferred app — we'll open it with the route to{' '}
+        <span className="font-medium text-text">{urls.address}</span>.
+      </p>
+      <div className="space-y-2">
+        {options.map((opt) => (
+          <button
+            key={opt.key}
+            type="button"
+            onClick={() => openIn(urls[opt.key])}
+            className="flex w-full items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/50 hover:bg-primary-light/20"
+          >
+            <span className="text-2xl">{opt.emoji}</span>
+            <div className="flex-1">
+              <p className="font-medium text-text">{opt.label}</p>
+              <p className="text-xs text-text-secondary">{opt.sub}</p>
+            </div>
+            <ArrowRight size={16} className="text-text-secondary" />
+          </button>
+        ))}
+      </div>
+    </Modal>
+  );
+}
 
 const STEPS = [
   { key: 'PAID', icon: CreditCard, label: 'Paid' },
@@ -74,6 +138,12 @@ function OrderDetail({ trackingCode }) {
   const [items, setItems] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [showDirections, setShowDirections] = useState(false);
+
+  // Order endpoint only returns location_name; pull the full address list
+  // to build maps deep-links. Public endpoint, no auth needed.
+  const { data: locations } = useFetch('/locations');
+  const orderLocation = (locations || []).find((l) => l.id === order?.location_id);
 
   const fetchOrder = useCallback(async () => {
     try {
@@ -156,16 +226,38 @@ function OrderDetail({ trackingCode }) {
 
       {/* Location */}
       <Card>
-        <div className="flex items-center gap-3">
+        <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-light">
             <MapPin size={20} className="text-primary" />
           </div>
-          <div>
+          <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-text">{t.tracking.pickupAt}</p>
             <p className="text-sm text-primary-dark font-semibold">{order.location_name}</p>
+            {orderLocation && (
+              <p className="text-xs text-text-secondary mt-0.5">
+                {orderLocation.address}, {orderLocation.city}, {orderLocation.state} {orderLocation.zip_code}
+              </p>
+            )}
           </div>
         </div>
+        {orderLocation && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full mt-3"
+            onClick={() => setShowDirections(true)}
+          >
+            <Navigation size={14} /> Get directions
+          </Button>
+        )}
       </Card>
+
+      <DirectionsModal
+        open={showDirections}
+        onClose={() => setShowDirections(false)}
+        location={orderLocation}
+      />
 
       {/* Order items */}
       <Card>

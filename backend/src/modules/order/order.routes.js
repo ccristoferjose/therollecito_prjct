@@ -13,6 +13,8 @@ router.post(
   '/',
   [
     body('location_id').isInt({ gt: 0 }).withMessage('Valid location_id required.'),
+    body('pickup_time').optional({ nullable: true, checkFalsy: true }).isISO8601()
+      .withMessage('pickup_time must be an ISO 8601 datetime.'),
     validateRequest,
   ],
   orderController.create

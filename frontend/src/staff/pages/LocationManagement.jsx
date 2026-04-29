@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, MapPin, Pencil, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Plus, MapPin, Pencil, ToggleLeft, ToggleRight, Clock } from 'lucide-react';
 import { useStaffAuth } from '@shared/context/StaffAuthContext';
 import { useFetch } from '@shared/hooks/useFetch';
 import { api } from '@shared/utils/api';
@@ -14,14 +14,25 @@ export default function LocationManagement() {
   const { data: locations, loading, refetch } = useFetch('/locations/all', token);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: '', address: '', city: '', state: '', zipCode: '', phone: '' });
+  const [form, setForm] = useState({
+    name: '', address: '', city: '', state: '', zipCode: '', phone: '',
+    openTime: '', closeTime: '',
+  });
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
 
   const handleChange = (e) => setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
 
+  // Backend returns "HH:MM:SS"; <input type="time"> wants "HH:MM".
+  const trimSeconds = (t) => (t ? String(t).slice(0, 5) : '');
+
   function openCreate() {
     setEditing(null);
-    setForm({ name: '', address: '', city: '', state: '', zipCode: '', phone: '' });
+    setForm({
+      name: '', address: '', city: '', state: '', zipCode: '', phone: '',
+      openTime: '', closeTime: '',
+    });
+    setSaveError(null);
     setShowModal(true);
   }
 
@@ -34,22 +45,47 @@ export default function LocationManagement() {
       state: loc.state,
       zipCode: loc.zip_code,
       phone: loc.phone || '',
+      openTime: trimSeconds(loc.open_time),
+      closeTime: trimSeconds(loc.close_time),
     });
+    setSaveError(null);
     setShowModal(true);
   }
 
   async function handleSave(e) {
     e.preventDefault();
+    setSaveError(null);
+
+    // Both hours or neither — admin clears scheduling by emptying both fields.
+    const hasOpen = !!form.openTime;
+    const hasClose = !!form.closeTime;
+    if (hasOpen !== hasClose) {
+      setSaveError('Set both opening and closing times, or leave both empty.');
+      return;
+    }
+    if (hasOpen && hasClose && form.closeTime <= form.openTime) {
+      setSaveError('Closing time must be after opening time.');
+      return;
+    }
+
     setSaving(true);
     try {
+      const payload = {
+        ...form,
+        openTime: form.openTime || null,
+        closeTime: form.closeTime || null,
+        clearHours: editing && !hasOpen && !hasClose,
+      };
       if (editing) {
-        await api.put(`/locations/${editing.id}`, form, token);
+        await api.put(`/locations/${editing.id}`, payload, token);
       } else {
-        await api.post('/locations', form, token);
+        await api.post('/locations', payload, token);
       }
       setShowModal(false);
       refetch();
-    } catch { /* handled */ } finally {
+    } catch (err) {
+      setSaveError(err?.message || 'Failed to save location.');
+    } finally {
       setSaving(false);
     }
   }
@@ -87,6 +123,16 @@ export default function LocationManagement() {
             {loc.phone && (
               <p className="text-sm text-text-secondary">Phone: {loc.phone}</p>
             )}
+            {loc.open_time && loc.close_time ? (
+              <p className="flex items-center gap-1.5 text-sm text-text-secondary">
+                <Clock size={12} className="text-primary" />
+                Hours: {trimSeconds(loc.open_time)} – {trimSeconds(loc.close_time)}
+              </p>
+            ) : (
+              <p className="flex items-center gap-1.5 text-xs text-text-secondary/70 italic">
+                <Clock size={12} /> No hours set (always open)
+              </p>
+            )}
             <div className="flex items-center gap-2 mt-2 pt-2 border-t border-border">
               <Button variant="outline" size="sm" onClick={() => openEdit(loc)}>
                 <Pencil size={12} /> Edit
@@ -119,6 +165,38 @@ export default function LocationManagement() {
             <Input label="Zip Code" name="zipCode" value={form.zipCode} onChange={handleChange} required />
             <Input label="Phone" name="phone" value={form.phone} onChange={handleChange} />
           </div>
+
+          <div className="rounded-lg border border-border bg-primary-light/20 p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <Clock size={14} className="text-primary" />
+              <p className="text-sm font-medium text-text">Service hours (optional)</p>
+            </div>
+            <p className="text-xs text-text-secondary">
+              When set, customers ordering before opening time can schedule a pickup
+              for later today. Leave both fields empty to disable scheduling.
+            </p>
+            <div className="grid grid-cols-2 gap-4">
+              <Input
+                label="Open"
+                name="openTime"
+                type="time"
+                value={form.openTime}
+                onChange={handleChange}
+              />
+              <Input
+                label="Close"
+                name="closeTime"
+                type="time"
+                value={form.closeTime}
+                onChange={handleChange}
+              />
+            </div>
+          </div>
+
+          {saveError && (
+            <p className="text-sm text-error">{saveError}</p>
+          )}
+
           <Button type="submit" variant="primary" className="w-full" disabled={saving}>
             {saving ? 'Saving...' : editing ? 'Update Location' : 'Create Location'}
           </Button>

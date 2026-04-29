@@ -3,5 +3,8 @@ dist
 .vite
 .DS_Store
 npm-debug.log*
+# Keep .env out of the image — it's bind-mounted at runtime from the host
+# (see docker-compose.yml). Baking it in causes stale values after edits.
+.env
 .env.local
 .env.*.local

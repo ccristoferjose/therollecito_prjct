@@ -242,18 +242,49 @@ CREATE PROCEDURE sp_order_create(
 )
 BEGIN
   DECLARE v_location_active TINYINT(1);
+  DECLARE v_open_time       TIME;
+  DECLARE v_close_time      TIME;
+  DECLARE v_pickup_time_t   TIME;
   DECLARE v_status_id       INT UNSIGNED;
   DECLARE v_order_id        INT UNSIGNED;
   DECLARE v_display_number  INT UNSIGNED;
 
   DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; RESIGNAL; END;
 
-  SELECT is_active INTO v_location_active FROM location WHERE id = p_location_id LIMIT 1;
+  SELECT is_active, open_time, close_time
+    INTO v_location_active, v_open_time, v_close_time
+    FROM location WHERE id = p_location_id LIMIT 1;
   IF v_location_active IS NULL THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Location not found.';
   END IF;
   IF v_location_active = 0 THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Location is not currently active.';
+  END IF;
+
+  -- pickup_time validation: must be today, within service hours, not in the past.
+  -- Only enforced when the location has hours configured (NULL = always-on).
+  IF p_pickup_time IS NOT NULL THEN
+    IF DATE(p_pickup_time) <> CURDATE() THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Scheduled pickup must be later today.';
+    END IF;
+    IF p_pickup_time < NOW() THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Scheduled pickup time is in the past.';
+    END IF;
+    IF v_open_time IS NOT NULL THEN
+      SET v_pickup_time_t = TIME(p_pickup_time);
+      IF v_pickup_time_t < v_open_time OR v_pickup_time_t > v_close_time THEN
+        SIGNAL SQLSTATE '45000'
+          SET MESSAGE_TEXT = 'Scheduled pickup time is outside the location''s service hours.';
+      END IF;
+    END IF;
+  ELSE
+    -- No pickup_time supplied. If hours are configured, the current time must be
+    -- within them — otherwise the customer needs to schedule.
+    IF v_open_time IS NOT NULL AND
+       (CURTIME() < v_open_time OR CURTIME() > v_close_time) THEN
+      SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Location is closed. Schedule a pickup time within service hours.';
+    END IF;
   END IF;
 
   IF p_user_id IS NULL AND (p_guest_name IS NULL OR CHAR_LENGTH(TRIM(p_guest_name)) = 0) THEN
@@ -1248,12 +1279,14 @@ END //
 
 DROP PROCEDURE IF EXISTS sp_location_create //
 CREATE PROCEDURE sp_location_create(
-  IN p_name     VARCHAR(150),
-  IN p_address  VARCHAR(255),
-  IN p_city     VARCHAR(100),
-  IN p_state    VARCHAR(100),
-  IN p_zip_code VARCHAR(20),
-  IN p_phone    VARCHAR(20)
+  IN p_name       VARCHAR(150),
+  IN p_address    VARCHAR(255),
+  IN p_city       VARCHAR(100),
+  IN p_state      VARCHAR(100),
+  IN p_zip_code   VARCHAR(20),
+  IN p_phone      VARCHAR(20),
+  IN p_open_time  TIME,
+  IN p_close_time TIME
 )
 BEGIN
   DECLARE v_id INT UNSIGNED;
@@ -1264,12 +1297,18 @@ BEGIN
   IF p_address IS NULL OR CHAR_LENGTH(TRIM(p_address)) = 0 THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Address is required.';
   END IF;
+  IF (p_open_time IS NULL) <> (p_close_time IS NULL) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'open_time and close_time must be set together (or both omitted).';
+  END IF;
+  IF p_open_time IS NOT NULL AND p_close_time <= p_open_time THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'close_time must be after open_time.';
+  END IF;
 
-  INSERT INTO location (name, address, city, state, zip_code, phone)
-  VALUES (TRIM(p_name), TRIM(p_address), TRIM(p_city), TRIM(p_state), TRIM(p_zip_code), p_phone);
+  INSERT INTO location (name, address, city, state, zip_code, phone, open_time, close_time)
+  VALUES (TRIM(p_name), TRIM(p_address), TRIM(p_city), TRIM(p_state), TRIM(p_zip_code), p_phone, p_open_time, p_close_time);
   SET v_id = LAST_INSERT_ID();
 
-  SELECT id, name, address, city, state, zip_code, phone, is_active, created_at
+  SELECT id, name, address, city, state, zip_code, phone, open_time, close_time, is_active, created_at
     FROM location WHERE id = v_id;
 END //
 
@@ -1281,23 +1320,34 @@ CREATE PROCEDURE sp_location_update(
   IN p_city        VARCHAR(100),
   IN p_state       VARCHAR(100),
   IN p_zip_code    VARCHAR(20),
-  IN p_phone       VARCHAR(20)
+  IN p_phone       VARCHAR(20),
+  IN p_open_time   TIME,
+  IN p_close_time  TIME,
+  -- Sentinel: 1 = caller wants to clear hours (set both to NULL).
+  -- Without this, NULL means "leave unchanged" (consistent with other fields).
+  IN p_clear_hours TINYINT(1)
 )
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_location_id) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Location not found.';
   END IF;
+  IF p_clear_hours = 0 AND p_open_time IS NOT NULL AND p_close_time IS NOT NULL
+     AND p_close_time <= p_open_time THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'close_time must be after open_time.';
+  END IF;
 
   UPDATE location
-     SET name     = COALESCE(TRIM(p_name), name),
-         address  = COALESCE(TRIM(p_address), address),
-         city     = COALESCE(TRIM(p_city), city),
-         state    = COALESCE(TRIM(p_state), state),
-         zip_code = COALESCE(TRIM(p_zip_code), zip_code),
-         phone    = COALESCE(p_phone, phone)
+     SET name       = COALESCE(TRIM(p_name), name),
+         address    = COALESCE(TRIM(p_address), address),
+         city       = COALESCE(TRIM(p_city), city),
+         state      = COALESCE(TRIM(p_state), state),
+         zip_code   = COALESCE(TRIM(p_zip_code), zip_code),
+         phone      = COALESCE(p_phone, phone),
+         open_time  = CASE WHEN p_clear_hours = 1 THEN NULL ELSE COALESCE(p_open_time,  open_time)  END,
+         close_time = CASE WHEN p_clear_hours = 1 THEN NULL ELSE COALESCE(p_close_time, close_time) END
    WHERE id = p_location_id;
 
-  SELECT id, name, address, city, state, zip_code, phone, is_active, created_at, updated_at
+  SELECT id, name, address, city, state, zip_code, phone, open_time, close_time, is_active, created_at, updated_at
     FROM location WHERE id = p_location_id;
 END //
 
@@ -1314,7 +1364,7 @@ END //
 DROP PROCEDURE IF EXISTS sp_location_list_active //
 CREATE PROCEDURE sp_location_list_active()
 BEGIN
-  SELECT id, name, address, city, state, zip_code, phone, created_at
+  SELECT id, name, address, city, state, zip_code, phone, open_time, close_time, created_at
     FROM location WHERE is_active = 1 ORDER BY name;
 END //
 
@@ -1322,7 +1372,7 @@ END //
 DROP PROCEDURE IF EXISTS sp_location_list_all //
 CREATE PROCEDURE sp_location_list_all()
 BEGIN
-  SELECT id, name, address, city, state, zip_code, phone, is_active, created_at
+  SELECT id, name, address, city, state, zip_code, phone, open_time, close_time, is_active, created_at
     FROM location ORDER BY name;
 END //
 

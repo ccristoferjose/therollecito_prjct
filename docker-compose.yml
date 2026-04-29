@@ -7,6 +7,10 @@ services:
     restart: unless-stopped
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     environment:
+      # Restaurant timezone. Override with `TZ=America/...` in your shell or .env.
+      # MUST match the backend service so absolute timestamps (NOW(), CURDATE(),
+      # CURTIME()) align with the user's clock and the admin-set service hours.
+      TZ: ${TZ:-America/Mexico_City}
       MYSQL_ROOT_PASSWORD: admin123
       MYSQL_DATABASE: restaurant_ordering
     ports:
@@ -36,10 +40,17 @@ services:
       - "3001:3001"
     volumes:
       - ./backend/.env:/app/.env:ro
+      # Firebase Admin SDK credentials — referenced by GOOGLE_APPLICATION_CREDENTIALS
+      # in backend/.env. Read-only mount; the file is gitignored at the project root.
+      - ./firebase-service-account.json:/app/firebase-service-account.json:ro
       # Dev: bind-mount source so nodemon picks up file changes without a rebuild.
       - ./backend/src:/app/src
       - ./backend/database:/app/database:ro
     environment:
+      # Restaurant timezone — must match the db service. Drives Node's `new Date()`
+      # output and is forwarded to mysql2 so DATETIME literals are parsed
+      # consistently. Override via shell env: `TZ=America/Tijuana docker compose up`.
+      TZ: ${TZ:-America/Mexico_City}
       # DB connection (Docker-specific — overrides .env)
       DB_HOST: db
       DB_PORT: 3306
@@ -73,6 +84,10 @@ services:
       - ./frontend/public:/app/public
       - ./frontend/index.html:/app/index.html
       - ./frontend/vite.config.js:/app/vite.config.js
+      # .env is .dockerignored so it's never baked in — bind-mount the live
+      # file so VITE_* changes are picked up after a container restart
+      # (Vite reads .env at dev-server startup, not on file change).
+      - ./frontend/.env:/app/.env:ro
     environment:
       VITE_PROXY_TARGET: http://backend:3001
       CHOKIDAR_USEPOLLING: "true"

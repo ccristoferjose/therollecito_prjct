@@ -1,6 +1,9 @@
 /backend/node_modules
 /backend/dist
 /backend/.env
+# Firebase service account — contains a private key, must never be committed.
+firebase-service-account.json
+*-firebase-adminsdk-*.json
 /frontend/node_modules
 /frontend/dist
 /.env

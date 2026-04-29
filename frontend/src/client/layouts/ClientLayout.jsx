@@ -157,26 +157,13 @@ export default function ClientLayout() {
               </p>
               <div className="mt-5 flex items-center gap-3">
                 <a
-                  href="#"
+                  href="https://www.instagram.com/therollecito?igsh=NTc4MTIwNjQ2YQ=="
                   aria-label="Instagram"
                   className="flex h-9 w-9 items-center justify-center rounded-full bg-[#FFF1DC]/10 transition-colors hover:bg-accent-hover"
                 >
                   <InstagramGlyph width="16" height="16" />
                 </a>
-                <a
-                  href="#"
-                  aria-label="Facebook"
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-[#FFF1DC]/10 transition-colors hover:bg-accent-hover"
-                >
-                  <FacebookGlyph width="16" height="16" />
-                </a>
-                <a
-                  href="#"
-                  aria-label="Twitter"
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-[#FFF1DC]/10 transition-colors hover:bg-accent-hover"
-                >
-                  <TwitterGlyph width="16" height="16" />
-                </a>
+                
               </div>
             </div>
 

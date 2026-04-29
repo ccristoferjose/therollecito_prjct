@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, CreditCard, Clock, User, CheckCircle, MapPin, ShieldCheck, AlertTriangle, Tag, X } from 'lucide-react';
+import { ArrowLeft, CreditCard, Clock, User, CheckCircle, MapPin, ShieldCheck, AlertTriangle, Tag, X, CalendarClock } from 'lucide-react';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { useLang } from '@shared/context/LangContext';
@@ -14,6 +14,91 @@ import Button from '@shared/components/Button';
 import Input from '@shared/components/Input';
 import Spinner from '@shared/components/Spinner';
 import { addGuestOrder } from '@shared/utils/guestOrders';
+
+// ---------------------------------------------------------------------------
+// Pickup-time scheduling helpers
+//
+// Locations may have daily service hours (open_time / close_time). When a
+// customer arrives before opening, they pick a slot for later today. When
+// the location is open, scheduling is optional. After closing, ordering is
+// blocked (order tomorrow). Slot granularity is 15 minutes.
+// ---------------------------------------------------------------------------
+const SLOT_MINUTES = 15;
+// Minimum lead time from "now" before a slot is selectable. Gives the kitchen
+// a buffer when the user is ordering during open hours.
+const MIN_LEAD_MINUTES = 15;
+
+// "HH:MM:SS" or "HH:MM" -> total minutes since midnight, or null.
+function timeStringToMinutes(t) {
+  if (!t) return null;
+  const [h, m] = String(t).split(':').map(Number);
+  return h * 60 + m;
+}
+
+function minutesToHHMM(mins) {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function formatSlotLabel(mins) {
+  const h24 = Math.floor(mins / 60);
+  const m = mins % 60;
+  const period = h24 >= 12 ? 'PM' : 'AM';
+  const h12 = ((h24 + 11) % 12) + 1;
+  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+}
+
+/**
+ * Returns scheduling state for the given location at the given moment:
+ *   - mode: 'no_schedule' | 'before_open' | 'open' | 'closed'
+ *   - slots: array of { minutes, label } available today, [] when closed
+ *   - openLabel / closeLabel: display strings
+ */
+function computeScheduleState(location, now = new Date()) {
+  const open = timeStringToMinutes(location?.open_time);
+  const close = timeStringToMinutes(location?.close_time);
+  if (open == null || close == null) {
+    return { mode: 'no_schedule', slots: [] };
+  }
+
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  let mode;
+  if (nowMins > close) mode = 'closed';
+  else if (nowMins < open) mode = 'before_open';
+  else mode = 'open';
+
+  // Earliest slot: max(now+lead, open), rounded UP to the next slot boundary.
+  // Latest slot: close (inclusive — we'll let the kitchen handle the last
+  // few minutes; the SP-level guard requires <= close).
+  const earliest = Math.max(nowMins + MIN_LEAD_MINUTES, open);
+  const earliestSlot = Math.ceil(earliest / SLOT_MINUTES) * SLOT_MINUTES;
+  const slots = [];
+  for (let m = earliestSlot; m <= close; m += SLOT_MINUTES) {
+    slots.push({ minutes: m, label: formatSlotLabel(m) });
+  }
+
+  return {
+    mode,
+    slots,
+    openLabel: formatSlotLabel(open),
+    closeLabel: formatSlotLabel(close),
+  };
+}
+
+/**
+ * Build a local-time DATETIME string for the server. Avoids toISOString()
+ * which converts to UTC — the backend interprets bare datetimes in its own
+ * local timezone, so we send the user's clock-time as-is.
+ */
+function buildLocalDateTime(slotMinutes, now = new Date()) {
+  const d = new Date(now);
+  d.setHours(Math.floor(slotMinutes / 60), slotMinutes % 60, 0, 0);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}T${minutesToHHMM(slotMinutes)}:00`;
+}
 
 // ---------------------------------------------------------------------------
 // Stripe-powered payment form — uses PaymentElement so Stripe can surface
@@ -118,6 +203,28 @@ export default function CheckoutPage() {
   const [promoApplying, setPromoApplying] = useState(false);
   const [appliedPromo, setAppliedPromo] = useState(null); // { code, discount_amount, discount_type, discount_value }
 
+  // Scheduling state. Re-derived on a 60s tick so the picker doesn't go stale
+  // if the user lingers — e.g. they cross opening time mid-checkout. setTick
+  // forces a re-render; computeScheduleState reads `new Date()` fresh.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 60000);
+    return () => clearInterval(id);
+  }, []);
+  const schedule = computeScheduleState(currentLocation, new Date());
+  const [selectedSlot, setSelectedSlot] = useState(null); // minutes-since-midnight, or null = ASAP
+
+  // Auto-select sensible default when scheduling state changes.
+  useEffect(() => {
+    if (schedule.mode === 'before_open') {
+      // Default to the earliest available slot at/after open — first item is
+      // typically open_time itself when computed before opening.
+      setSelectedSlot(schedule.slots[0]?.minutes ?? null);
+    } else if (schedule.mode === 'open' || schedule.mode === 'no_schedule' || schedule.mode === 'closed') {
+      setSelectedSlot(null);
+    }
+  }, [schedule.mode, currentLocation?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const subtotal = total;
   const discount = appliedPromo?.discount_amount || 0;
   const finalTotal = Math.max(0, subtotal - discount);
@@ -207,13 +314,28 @@ export default function CheckoutPage() {
     setError(null);
 
     try {
+      // Block ordering when the location has hours and is past close.
+      if (schedule.mode === 'closed') {
+        setError('This location is closed for the day. Please order again tomorrow.');
+        setLoading(false);
+        return;
+      }
+      // When the customer arrives before opening, a slot is required.
+      if (schedule.mode === 'before_open' && selectedSlot == null) {
+        setError('Please pick a pickup time.');
+        setLoading(false);
+        return;
+      }
+
       // 1. Create the order
+      const pickupTimeStr = selectedSlot != null ? buildLocalDateTime(selectedSlot) : null;
       const order = await api.post('/orders', {
         location_id: locationId,
         user_id: dbUser?.id || null,
         guest_name: form.guest_name || firebaseUser?.displayName || 'Guest',
         guest_phone: form.guest_phone || null,
         notes: form.notes || null,
+        pickup_time: pickupTimeStr,
       });
 
       // 2. Add items and their options
@@ -304,6 +426,97 @@ export default function CheckoutPage() {
       {/* ============================================================ */}
       {step === 'info' && (
         <form onSubmit={handleCreateOrder} className="space-y-6">
+          {/* Scheduling — visible only when the location publishes hours. */}
+          {schedule.mode === 'closed' && (
+            <div className="flex items-start gap-3 rounded-lg border border-error/30 bg-red-50 p-4">
+              <AlertTriangle size={18} className="text-error shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-error">This location is closed</p>
+                <p className="text-xs text-text-secondary mt-0.5">
+                  Service hours: {schedule.openLabel} – {schedule.closeLabel}. Please come back tomorrow.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {schedule.mode === 'before_open' && (
+            <Card>
+              <div className="flex items-center gap-2 mb-2">
+                <CalendarClock size={18} className="text-primary" />
+                <h2 className="font-semibold text-text">Schedule your pickup</h2>
+              </div>
+              <p className="text-sm text-text-secondary mb-4">
+                We open at <span className="font-medium text-text">{schedule.openLabel}</span> today.
+                Pick a time and we'll have your order ready.
+              </p>
+              {schedule.slots.length === 0 ? (
+                <p className="text-sm text-error">No pickup slots remaining today.</p>
+              ) : (
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                  {schedule.slots.map((slot) => {
+                    const active = selectedSlot === slot.minutes;
+                    return (
+                      <button
+                        key={slot.minutes}
+                        type="button"
+                        onClick={() => setSelectedSlot(slot.minutes)}
+                        className={`rounded-lg border px-2 py-2 text-sm transition-colors ${
+                          active
+                            ? 'border-primary bg-primary text-white font-semibold'
+                            : 'border-border bg-surface text-text hover:border-primary/40'
+                        }`}
+                      >
+                        {slot.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          )}
+
+          {schedule.mode === 'open' && schedule.slots.length > 0 && (
+            <Card>
+              <div className="flex items-center gap-2 mb-2">
+                <CalendarClock size={18} className="text-primary" />
+                <h2 className="font-semibold text-text">Pickup time</h2>
+              </div>
+              <p className="text-sm text-text-secondary mb-4">
+                Order now or schedule for later today (open until {schedule.closeLabel}).
+              </p>
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                <button
+                  type="button"
+                  onClick={() => setSelectedSlot(null)}
+                  className={`rounded-lg border px-2 py-2 text-sm transition-colors ${
+                    selectedSlot === null
+                      ? 'border-primary bg-primary text-white font-semibold'
+                      : 'border-border bg-surface text-text hover:border-primary/40'
+                  }`}
+                >
+                  ASAP
+                </button>
+                {schedule.slots.map((slot) => {
+                  const active = selectedSlot === slot.minutes;
+                  return (
+                    <button
+                      key={slot.minutes}
+                      type="button"
+                      onClick={() => setSelectedSlot(slot.minutes)}
+                      className={`rounded-lg border px-2 py-2 text-sm transition-colors ${
+                        active
+                          ? 'border-primary bg-primary text-white font-semibold'
+                          : 'border-border bg-surface text-text hover:border-primary/40'
+                      }`}
+                    >
+                      {slot.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </Card>
+          )}
+
           <Card>
             <div className="flex items-center gap-2 mb-4">
               <User size={18} className="text-primary" />
@@ -456,7 +669,20 @@ export default function CheckoutPage() {
             <div className="rounded-lg bg-red-50 border border-error/20 p-3 text-sm text-error">{error}</div>
           )}
 
-          <Button type="submit" variant="accent" size="lg" className="w-full" disabled={loading}>
+          {selectedSlot != null && schedule.mode !== 'closed' && (
+            <p className="flex items-center justify-center gap-1.5 text-sm text-text-secondary">
+              <CalendarClock size={14} className="text-primary" />
+              Pickup at <span className="font-semibold text-text">{formatSlotLabel(selectedSlot)}</span>
+            </p>
+          )}
+
+          <Button
+            type="submit"
+            variant="accent"
+            size="lg"
+            className="w-full"
+            disabled={loading || schedule.mode === 'closed'}
+          >
             {loading ? (
               <><Spinner size="sm" /> {t.checkout.processing}</>
             ) : (
