@@ -116,6 +116,25 @@ router.post(
   menuController.createItemOption
 );
 
+// Admin: update item option (rename / change required / max_choices)
+router.patch(
+  '/items/options/:id',
+  requireAuth,
+  requireRole('admin', 'manager'),
+  [param('id').isInt({ gt: 0 }), validateRequest],
+  menuController.updateItemOption
+);
+
+// Admin: delete item option (cascade-removes its values; past order rows
+// fall through ON DELETE SET NULL with names preserved via snapshot)
+router.delete(
+  '/items/options/:id',
+  requireAuth,
+  requireRole('admin', 'manager'),
+  [param('id').isInt({ gt: 0 }), validateRequest],
+  menuController.deleteItemOption
+);
+
 // Admin: create item option value
 router.post(
   '/items/options/values',
@@ -123,6 +142,24 @@ router.post(
   requireRole('admin', 'manager'),
   [body('itemOptionId').isInt({ gt: 0 }), body('name').notEmpty(), validateRequest],
   menuController.createItemOptionValue
+);
+
+// Admin: update item option value (rename / change price modifier)
+router.patch(
+  '/items/options/values/:id',
+  requireAuth,
+  requireRole('admin', 'manager'),
+  [param('id').isInt({ gt: 0 }), validateRequest],
+  menuController.updateItemOptionValue
+);
+
+// Admin: delete a single option value
+router.delete(
+  '/items/options/values/:id',
+  requireAuth,
+  requireRole('admin', 'manager'),
+  [param('id').isInt({ gt: 0 }), validateRequest],
+  menuController.deleteItemOptionValue
 );
 
 module.exports = router;

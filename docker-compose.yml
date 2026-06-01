@@ -14,7 +14,10 @@ services:
       MYSQL_ROOT_PASSWORD: admin123
       MYSQL_DATABASE: restaurant_ordering
     ports:
-      - "3306:3306"
+      # Published on 3307 to avoid colliding with a native MySQL on the host's
+      # 3306. The backend reaches this DB as db:3306 over the compose network,
+      # so the internal port is unchanged; 3307 is only for host tools.
+      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       # SQL files mounted to /sql/ (NOT initdb.d — to avoid double execution).
@@ -29,6 +32,45 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # ---------------------------------------------------------------------------
+  # MinIO — S3-compatible object storage for LOCAL DEV ONLY.
+  # Stands in for AWS S3 so image uploads never touch a real AWS account.
+  #   :9000 = S3 API (the backend talks to this)
+  #   :9001 = web console (http://localhost:9001, login minioadmin/minioadmin)
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  # ---------------------------------------------------------------------------
+  # One-shot: wait for MinIO, create the dev bucket, make it publicly readable.
+  # The bucket must allow anonymous downloads because uploaded images are
+  # served straight to the browser via <img src> (the app sets no per-object
+  # ACL). Exits 0 once done; safe to re-run (idempotent).
+  # ---------------------------------------------------------------------------
+  minio-setup:
+    image: minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 minioadmin minioadmin; do
+        echo 'waiting for minio...'; sleep 1;
+      done &&
+      mc mb --ignore-existing local/the-rollecito-dev &&
+      mc anonymous set download local/the-rollecito-dev &&
+      echo 'MinIO bucket the-rollecito-dev ready (public read).'
+      "
 
   # ---------------------------------------------------------------------------
   # Backend (Node.js + Express)
@@ -59,11 +101,18 @@ services:
       DB_NAME: restaurant_ordering
       DB_CONNECTION_LIMIT: 10
       CORS_ORIGIN: http://localhost:5173
-      # Everything else (PORT, NODE_ENV, JWT, Firebase, Stripe)
-      # is loaded from backend/.env mounted above.
+      # S3 → local MinIO. Inside the compose network MinIO is reachable as
+      # `minio`, so override the .env value (which uses localhost for
+      # bare-metal dev). S3_PUBLIC_URL_BASE stays localhost (from .env) so the
+      # browser can load images via the published :9000 port.
+      S3_ENDPOINT: http://minio:9000
+      # Everything else (PORT, NODE_ENV, JWT, Firebase, Stripe, AWS_* creds,
+      # S3_BUCKET, S3_PUBLIC_URL_BASE) is loaded from backend/.env mounted above.
     depends_on:
       db:
         condition: service_healthy
+      minio:
+        condition: service_started
 
   # ---------------------------------------------------------------------------
   # Frontend (Vite dev server)
@@ -96,3 +145,4 @@ services:
 
 volumes:
   mysql_data:
+  minio_data:

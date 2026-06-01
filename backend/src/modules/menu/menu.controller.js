@@ -56,9 +56,29 @@ const createItemOption = asyncHandler(async (req, res) => {
   res.status(201).json(option);
 });
 
+const updateItemOption = asyncHandler(async (req, res) => {
+  const option = await menuService.updateItemOption(req.params.id, req.body);
+  res.json(option);
+});
+
+const deleteItemOption = asyncHandler(async (req, res) => {
+  await menuService.deleteItemOption(req.params.id);
+  res.status(204).end();
+});
+
 const createItemOptionValue = asyncHandler(async (req, res) => {
   const value = await menuService.createItemOptionValue(req.body);
   res.status(201).json(value);
+});
+
+const updateItemOptionValue = asyncHandler(async (req, res) => {
+  const value = await menuService.updateItemOptionValue(req.params.id, req.body);
+  res.json(value);
+});
+
+const deleteItemOptionValue = asyncHandler(async (req, res) => {
+  await menuService.deleteItemOptionValue(req.params.id);
+  res.status(204).end();
 });
 
 module.exports = {
@@ -73,5 +93,9 @@ module.exports = {
   deleteItem,
   syncItemLocations,
   createItemOption,
+  updateItemOption,
+  deleteItemOption,
   createItemOptionValue,
+  updateItemOptionValue,
+  deleteItemOptionValue,
 };

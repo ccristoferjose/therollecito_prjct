@@ -90,12 +90,41 @@ async function createItemOption({ itemId, name, isRequired, maxChoices }) {
   return rows[0];
 }
 
+async function updateItemOption(optionId, { name, isRequired, maxChoices }) {
+  const result = await db.call('sp_item_option_update', [
+    optionId,
+    name || null,
+    isRequired === undefined ? null : (isRequired ? 1 : 0),
+    maxChoices === undefined ? null : maxChoices,
+  ]);
+  const rows = Array.isArray(result[0]) ? result[0] : result;
+  return rows[0];
+}
+
+async function deleteItemOption(optionId) {
+  await db.call('sp_item_option_delete', [optionId]);
+}
+
 async function createItemOptionValue({ itemOptionId, name, priceModifier }) {
   const result = await db.call('sp_item_option_value_create', [
     itemOptionId, name, priceModifier || 0,
   ]);
   const rows = Array.isArray(result[0]) ? result[0] : result;
   return rows[0];
+}
+
+async function updateItemOptionValue(valueId, { name, priceModifier }) {
+  const result = await db.call('sp_item_option_value_update', [
+    valueId,
+    name || null,
+    priceModifier === undefined ? null : priceModifier,
+  ]);
+  const rows = Array.isArray(result[0]) ? result[0] : result;
+  return rows[0];
+}
+
+async function deleteItemOptionValue(valueId) {
+  await db.call('sp_item_option_value_delete', [valueId]);
 }
 
 module.exports = {
@@ -110,5 +139,9 @@ module.exports = {
   deleteItem,
   syncItemLocations,
   createItemOption,
+  updateItemOption,
+  deleteItemOption,
   createItemOptionValue,
+  updateItemOptionValue,
+  deleteItemOptionValue,
 };

@@ -1,0 +1,139 @@
+name: Deploy to Production
+
+# Promotes whatever lands on `main` to production:
+#   backend  → AWS Lightsail Container Service (yumyum-backend, us-east-1)
+#   frontend → AWS Amplify (yumyum-ceviches, us-east-1)
+#
+# The single `deploy` job is bound to the `production` GitHub Environment. If
+# that environment has required reviewers configured, every run pauses for one
+# manual approval before anything ships to customers.
+#
+# Required secrets/variables and one-time setup: deploy/PRODUCTION_CICD.md
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never run two production deploys at once; let an in-flight one finish.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  deploy:
+    name: Deploy backend + frontend
+    runs-on: ubuntu-latest
+    # Binds the run to the `production` environment → manual-approval gate.
+    environment:
+      name: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Credentials for the AWS CLI (`aws lightsail`, `aws amplify`). These are
+      # the DEPLOY account's keys — kept separate from the app's S3 keys below.
+      - name: Configure AWS credentials (deploy)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install Lightsail control plugin
+        run: |
+          sudo curl -fsSL "https://s3.us-west-2.amazonaws.com/lightsailctl/latest/linux-amd64/lightsailctl" \
+            -o /usr/local/bin/lightsailctl
+          sudo chmod +x /usr/local/bin/lightsailctl
+
+      - name: Install MySQL client
+        run: sudo apt-get update && sudo apt-get install -y mysql-client
+
+      # Applies pending schema migrations and (re)loads stored procedures BEFORE
+      # the new backend code goes live, so objects like sp_staff_update_password
+      # exist when the container starts. Idempotent — each migration runs once,
+      # SPs are DROP/CREATE. First time against an existing DB, baseline it once:
+      #   DB_HOST=... DB_PASSWORD=... ./deploy/db-migrate.sh --baseline
+      - name: Apply DB migrations + stored procedures
+        env:
+          DB_HOST: ${{ secrets.PROD_DB_HOST }}
+          DB_PORT: ${{ secrets.PROD_DB_PORT }}
+          DB_USER: ${{ secrets.PROD_DB_USER }}
+          DB_PASSWORD: ${{ secrets.PROD_DB_PASSWORD }}
+          DB_NAME: ${{ secrets.PROD_DB_NAME }}
+          DB_SSL_MODE: REQUIRED
+        run: ./deploy/db-migrate.sh
+
+      # Builds the image, pushes it to Lightsail, and deploys the container with
+      # the production env injected below. lightsail-backend.sh reads these from
+      # the environment (exported vars win over any .env file).
+      - name: Deploy backend → Lightsail Container Service
+        env:
+          DB_HOST: ${{ secrets.PROD_DB_HOST }}
+          DB_USER: ${{ secrets.PROD_DB_USER }}
+          DB_PASSWORD: ${{ secrets.PROD_DB_PASSWORD }}
+          DB_NAME: ${{ secrets.PROD_DB_NAME }}
+          JWT_SECRET: ${{ secrets.PROD_JWT_SECRET }}
+          FIREBASE_PROJECT_ID: ${{ secrets.PROD_FIREBASE_PROJECT_ID }}
+          # Inline service-account JSON — a container has no credentials file,
+          # so this is REQUIRED for Firebase token verification in production.
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.PROD_FIREBASE_SERVICE_ACCOUNT }}
+          STRIPE_SECRET_KEY: ${{ secrets.PROD_STRIPE_SECRET_KEY }}
+          STRIPE_PUBLISHABLE_KEY: ${{ secrets.PROD_STRIPE_PUBLISHABLE_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.PROD_STRIPE_WEBHOOK_SECRET }}
+          CORS_ORIGIN: ${{ secrets.PROD_CORS_ORIGIN }}
+          # App S3 credentials for menu-image uploads (separate from the deploy
+          # creds above so they don't clobber the AWS CLI auth).
+          S3_BUCKET: ${{ secrets.PROD_S3_BUCKET }}
+          S3_PUBLIC_URL_BASE: ${{ secrets.PROD_S3_PUBLIC_URL_BASE }}
+          APP_AWS_REGION: ${{ secrets.PROD_S3_REGION }}
+          APP_AWS_ACCESS_KEY_ID: ${{ secrets.PROD_S3_ACCESS_KEY_ID }}
+          APP_AWS_SECRET_ACCESS_KEY: ${{ secrets.PROD_S3_SECRET_ACCESS_KEY }}
+        run: ./deploy/lightsail-backend.sh
+
+      - name: Resolve backend public URL
+        id: backend
+        run: |
+          URL=$(aws lightsail get-container-services \
+            --service-name yumyum-backend \
+            --region "${AWS_REGION}" \
+            --query 'containerServices[0].url' --output text)
+          URL="${URL%/}"   # strip trailing slash; the frontend appends /api
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          echo "Backend URL: ${URL}"
+
+      # Vite bakes VITE_* into the bundle at build time. These are public values
+      # (safe to expose), so they come from repo VARIABLES, not secrets.
+      # VITE_API_URL defaults to the just-deployed backend URL, but a repo
+      # variable wins if you front the backend with a custom domain.
+      - name: Write frontend production env
+        run: |
+          API_URL="${{ vars.VITE_API_URL }}"
+          [ -z "${API_URL}" ] && API_URL="${{ steps.backend.outputs.url }}"
+          SOCKET_URL="${{ vars.VITE_SOCKET_URL }}"
+          [ -z "${SOCKET_URL}" ] && SOCKET_URL="${API_URL}"
+          cat > frontend/.env.production <<EOF
+          VITE_FIREBASE_API_KEY=${{ vars.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN=${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID=${{ vars.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET=${{ vars.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID=${{ vars.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID=${{ vars.VITE_FIREBASE_APP_ID }}
+          VITE_API_URL=${API_URL}
+          VITE_SOCKET_URL=${SOCKET_URL}
+          EOF
+          echo "Wrote frontend/.env.production (VITE_API_URL=${API_URL})"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Deploy frontend → Amplify
+        run: ./deploy/amplify-frontend.sh --deploy

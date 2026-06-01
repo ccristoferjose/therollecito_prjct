@@ -226,6 +226,36 @@ BEGIN
    WHERE u.id = p_user_id;
 END //
 
+DROP PROCEDURE IF EXISTS sp_staff_update_password //
+CREATE PROCEDURE sp_staff_update_password(
+  IN p_user_id       INT UNSIGNED,
+  IN p_password_hash VARCHAR(255)
+)
+BEGIN
+  DECLARE v_role_name VARCHAR(50);
+
+  IF p_password_hash IS NULL OR CHAR_LENGTH(p_password_hash) = 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Password hash is required.';
+  END IF;
+
+  SELECT r.name INTO v_role_name
+    FROM `user` u
+    JOIN role r ON r.id = u.role_id
+   WHERE u.id = p_user_id
+   LIMIT 1;
+
+  IF v_role_name IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'User not found.';
+  END IF;
+  -- Passwords are bcrypt-based staff credentials only; client accounts
+  -- authenticate via Firebase and must never carry a password hash.
+  IF v_role_name NOT IN ('admin', 'manager') THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Password can only be set for staff accounts.';
+  END IF;
+
+  UPDATE `user` SET password_hash = p_password_hash WHERE id = p_user_id;
+END //
+
 
 -- #############################################################################
 -- #  SECTION 2: ORDER LIFECYCLE
@@ -343,6 +373,7 @@ BEGIN
   DECLARE v_status_name   VARCHAR(50);
   DECLARE v_item_price    DECIMAL(10, 2);
   DECLARE v_item_active   TINYINT(1);
+  DECLARE v_item_name     VARCHAR(150);
   DECLARE v_order_item_id INT UNSIGNED;
 
   DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; RESIGNAL; END;
@@ -361,7 +392,8 @@ BEGIN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Order is no longer editable.';
   END IF;
 
-  SELECT price, is_active INTO v_item_price, v_item_active FROM item WHERE id = p_item_id LIMIT 1;
+  SELECT name, price, is_active INTO v_item_name, v_item_price, v_item_active
+    FROM item WHERE id = p_item_id LIMIT 1;
   IF v_item_price IS NULL THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Item not found.';
   END IF;
@@ -370,14 +402,17 @@ BEGIN
   END IF;
 
   START TRANSACTION;
-  INSERT INTO order_item (order_id, item_id, quantity, unit_price, notes)
-  VALUES (p_order_id, p_item_id, p_quantity, v_item_price, p_notes);
+  -- Snapshot item_name so the order line stays readable if the menu item is
+  -- later edited or deleted.
+  INSERT INTO order_item (order_id, item_id, item_name, quantity, unit_price, notes)
+  VALUES (p_order_id, p_item_id, v_item_name, p_quantity, v_item_price, p_notes);
   SET v_order_item_id = LAST_INSERT_ID();
   COMMIT;
 
-  SELECT oi.id, oi.order_id, oi.item_id, i.name AS item_name,
+  SELECT oi.id, oi.order_id, oi.item_id,
+         COALESCE(i.name, oi.item_name) AS item_name,
          oi.quantity, oi.unit_price, oi.notes, oi.created_at
-    FROM order_item oi JOIN item i ON i.id = oi.item_id
+    FROM order_item oi LEFT JOIN item i ON i.id = oi.item_id
    WHERE oi.id = v_order_item_id;
 END //
 
@@ -387,12 +422,14 @@ CREATE PROCEDURE sp_order_add_item_option(
   IN p_item_option_value_id INT UNSIGNED
 )
 BEGIN
-  DECLARE v_status_name     VARCHAR(50);
-  DECLARE v_order_id        INT UNSIGNED;
-  DECLARE v_oi_item_id      INT UNSIGNED;
-  DECLARE v_iov_item_id     INT UNSIGNED;
-  DECLARE v_price_modifier  DECIMAL(10, 2);
-  DECLARE v_new_id          INT UNSIGNED;
+  DECLARE v_status_name       VARCHAR(50);
+  DECLARE v_order_id          INT UNSIGNED;
+  DECLARE v_oi_item_id        INT UNSIGNED;
+  DECLARE v_iov_item_id       INT UNSIGNED;
+  DECLARE v_option_name       VARCHAR(100);
+  DECLARE v_option_value_name VARCHAR(100);
+  DECLARE v_price_modifier    DECIMAL(10, 2);
+  DECLARE v_new_id            INT UNSIGNED;
 
   DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; RESIGNAL; END;
 
@@ -409,7 +446,10 @@ BEGIN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Order is no longer editable.';
   END IF;
 
-  SELECT io.item_id, iov.price_modifier INTO v_iov_item_id, v_price_modifier
+  -- Snapshot both the option name (e.g. "Size") and the chosen value name
+  -- (e.g. "Large") so deleting either later doesn't garble past orders.
+  SELECT io.item_id, io.name, iov.name, iov.price_modifier
+    INTO v_iov_item_id, v_option_name, v_option_value_name, v_price_modifier
     FROM item_option_value iov
     JOIN item_option io ON io.id = iov.item_option_id
    WHERE iov.id = p_item_option_value_id LIMIT 1;
@@ -421,15 +461,18 @@ BEGIN
   END IF;
 
   START TRANSACTION;
-  INSERT INTO order_item_option (order_item_id, item_option_value_id, price_modifier)
-  VALUES (p_order_item_id, p_item_option_value_id, v_price_modifier);
+  INSERT INTO order_item_option
+    (order_item_id, item_option_value_id, option_name, option_value_name, price_modifier)
+  VALUES
+    (p_order_item_id, p_item_option_value_id, v_option_name, v_option_value_name, v_price_modifier);
   SET v_new_id = LAST_INSERT_ID();
   COMMIT;
 
   SELECT oio.id, oio.order_item_id, oio.item_option_value_id,
-         iov.name AS option_value_name, oio.price_modifier, oio.created_at
+         COALESCE(iov.name, oio.option_value_name) AS option_value_name,
+         oio.price_modifier, oio.created_at
     FROM order_item_option oio
-    JOIN item_option_value iov ON iov.id = oio.item_option_value_id
+    LEFT JOIN item_option_value iov ON iov.id = oio.item_option_value_id
    WHERE oio.id = v_new_id;
 END //
 
@@ -456,11 +499,18 @@ END //
 DROP PROCEDURE IF EXISTS sp_order_calculate_total //
 CREATE PROCEDURE sp_order_calculate_total(
   IN p_order_id       INT UNSIGNED,
-  IN p_promotion_code VARCHAR(50)
+  IN p_promotion_code VARCHAR(50),
+  -- Stripe fee passthrough. Caller passes the rate (e.g. 0.029) and fixed
+  -- (e.g. 0.30). Pass NULL/0 to disable. Stored in order.processing_fee
+  -- and added to total_amount.
+  IN p_fee_percent    DECIMAL(6, 4),
+  IN p_fee_fixed      DECIMAL(10, 2)
 )
 BEGIN
   DECLARE v_status_name     VARCHAR(50);
   DECLARE v_subtotal        DECIMAL(10, 2);
+  DECLARE v_pre_fee_total   DECIMAL(10, 2);
+  DECLARE v_processing_fee  DECIMAL(10, 2) DEFAULT 0.00;
   DECLARE v_total           DECIMAL(10, 2);
   DECLARE v_discount_amount DECIMAL(10, 2) DEFAULT 0.00;
   DECLARE v_promotion_id    INT UNSIGNED DEFAULT NULL;
@@ -532,12 +582,28 @@ BEGIN
     END IF;
   END IF;
 
-  SET v_total = v_subtotal - v_discount_amount;
+  SET v_pre_fee_total = v_subtotal - v_discount_amount;
+  IF v_pre_fee_total < 0 THEN
+    SET v_pre_fee_total = 0;
+  END IF;
+
+  -- Processing fee: only apply when there's something to charge. When the
+  -- order ends up free (e.g. 100%-off promo) the customer pays nothing and
+  -- we don't synthesize a fake fee on top.
+  IF v_pre_fee_total > 0 AND (p_fee_percent IS NOT NULL OR p_fee_fixed IS NOT NULL) THEN
+    SET v_processing_fee = ROUND(
+      v_pre_fee_total * COALESCE(p_fee_percent, 0) + COALESCE(p_fee_fixed, 0),
+      2
+    );
+  END IF;
+
+  SET v_total = v_pre_fee_total + v_processing_fee;
 
   START TRANSACTION;
   UPDATE `order`
      SET subtotal_amount = v_subtotal,
          discount_amount = v_discount_amount,
+         processing_fee  = v_processing_fee,
          total_amount    = v_total,
          promotion_id    = v_promotion_id,
          promotion_code  = CASE WHEN v_promotion_id IS NULL THEN NULL ELSE UPPER(TRIM(p_promotion_code)) END
@@ -547,6 +613,7 @@ BEGIN
   SELECT p_order_id AS order_id,
          v_subtotal AS subtotal_amount,
          v_discount_amount AS discount_amount,
+         v_processing_fee AS processing_fee,
          v_total AS total_amount,
          v_promotion_id AS promotion_id,
          CASE WHEN v_promotion_id IS NULL THEN NULL ELSE UPPER(TRIM(p_promotion_code)) END AS promotion_code;
@@ -656,7 +723,7 @@ BEGIN
          o.user_id, o.status_id, os.name AS status_name,
          o.tracking_code, o.display_number,
          o.guest_name, o.guest_phone, o.pickup_time,
-         o.total_amount, o.subtotal_amount, o.discount_amount,
+         o.total_amount, o.subtotal_amount, o.discount_amount, o.processing_fee,
          o.promotion_id, o.promotion_code,
          o.notes, o.is_priority, o.priority_set_at, o.priority_reason,
          o.created_at, o.updated_at
@@ -768,7 +835,9 @@ BEGIN
          o.user_id, o.status_id, os.name AS status_name,
          o.tracking_code, o.display_number,
          o.guest_name, o.guest_phone, o.pickup_time,
-         o.total_amount, o.notes, o.created_at, o.updated_at
+         o.total_amount, o.subtotal_amount, o.discount_amount, o.processing_fee,
+         o.promotion_code,
+         o.notes, o.created_at, o.updated_at
     FROM `order` o
     JOIN order_status os ON os.id = o.status_id
     JOIN location l ON l.id = o.location_id
@@ -778,20 +847,27 @@ END //
 DROP PROCEDURE IF EXISTS sp_order_get_items //
 CREATE PROCEDURE sp_order_get_items(IN p_order_id INT UNSIGNED)
 BEGIN
-  SELECT oi.id, oi.order_id, oi.item_id, i.name AS item_name,
+  -- LEFT JOIN with COALESCE so deleted items still surface their snapshotted
+  -- name. is_available flips to 0 when the underlying item is gone or
+  -- inactive — frontends use this for "no longer available" / disabled
+  -- "reorder" buttons.
+  SELECT oi.id, oi.order_id, oi.item_id,
+         COALESCE(i.name, oi.item_name) AS item_name,
+         CASE WHEN i.id IS NOT NULL AND i.is_active = 1 THEN 1 ELSE 0 END AS is_available,
          oi.quantity, oi.unit_price, oi.notes, oi.created_at
     FROM order_item oi
-    JOIN item i ON i.id = oi.item_id
+    LEFT JOIN item i ON i.id = oi.item_id
    WHERE oi.order_id = p_order_id
    ORDER BY oi.id;
 
   SELECT oio.id, oio.order_item_id, oio.item_option_value_id,
-         iov.name AS option_value_name,
-         io.name AS option_name,
+         COALESCE(iov.name, oio.option_value_name) AS option_value_name,
+         COALESCE(io.name,  oio.option_name)       AS option_name,
+         CASE WHEN iov.id IS NOT NULL THEN 1 ELSE 0 END AS is_available,
          oio.price_modifier
     FROM order_item_option oio
-    JOIN item_option_value iov ON iov.id = oio.item_option_value_id
-    JOIN item_option io ON io.id = iov.item_option_id
+    LEFT JOIN item_option_value iov ON iov.id = oio.item_option_value_id
+    LEFT JOIN item_option io ON io.id = iov.item_option_id
     JOIN order_item oi ON oi.id = oio.order_item_id
    WHERE oi.order_id = p_order_id
    ORDER BY oio.order_item_id, oio.id;
@@ -1162,13 +1238,16 @@ BEGIN
     FROM item WHERE id = p_item_id;
 END //
 
+-- Hard delete is now safe: order_item.item_name and order_item_option's
+-- option_name/option_value_name preserve a readable snapshot, and the FKs
+-- are ON DELETE SET NULL so past orders survive. CASCADE on item still
+-- removes item_location / item_option / item_option_value.
 DROP PROCEDURE IF EXISTS sp_item_delete //
 CREATE PROCEDURE sp_item_delete(IN p_item_id INT UNSIGNED)
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_item_id) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Item not found.';
   END IF;
-  -- CASCADE will remove item_location, item_option, item_option_value
   DELETE FROM item WHERE id = p_item_id;
 END //
 
@@ -1270,6 +1349,75 @@ BEGIN
 
   SELECT id, item_option_id, name, price_modifier, created_at
     FROM item_option_value WHERE id = v_id;
+END //
+
+DROP PROCEDURE IF EXISTS sp_item_option_update //
+CREATE PROCEDURE sp_item_option_update(
+  IN p_id          INT UNSIGNED,
+  IN p_name        VARCHAR(100),
+  IN p_is_required TINYINT(1),
+  IN p_max_choices INT UNSIGNED
+)
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM item_option WHERE id = p_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Item option not found.';
+  END IF;
+  IF p_name IS NOT NULL AND CHAR_LENGTH(TRIM(p_name)) = 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Option name cannot be empty.';
+  END IF;
+
+  UPDATE item_option
+     SET name        = COALESCE(TRIM(p_name), name),
+         is_required = COALESCE(p_is_required, is_required),
+         max_choices = COALESCE(p_max_choices, max_choices)
+   WHERE id = p_id;
+
+  SELECT id, item_id, name, is_required, max_choices, updated_at
+    FROM item_option WHERE id = p_id;
+END //
+
+-- CASCADE on item_option_value's FK takes care of the children. Past order
+-- references in order_item_option fall through ON DELETE SET NULL (preserved
+-- via the option_name / option_value_name snapshots).
+DROP PROCEDURE IF EXISTS sp_item_option_delete //
+CREATE PROCEDURE sp_item_option_delete(IN p_id INT UNSIGNED)
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM item_option WHERE id = p_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Item option not found.';
+  END IF;
+  DELETE FROM item_option WHERE id = p_id;
+END //
+
+DROP PROCEDURE IF EXISTS sp_item_option_value_update //
+CREATE PROCEDURE sp_item_option_value_update(
+  IN p_id             INT UNSIGNED,
+  IN p_name           VARCHAR(100),
+  IN p_price_modifier DECIMAL(10, 2)
+)
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM item_option_value WHERE id = p_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Item option value not found.';
+  END IF;
+  IF p_name IS NOT NULL AND CHAR_LENGTH(TRIM(p_name)) = 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Option value name cannot be empty.';
+  END IF;
+
+  UPDATE item_option_value
+     SET name           = COALESCE(TRIM(p_name), name),
+         price_modifier = COALESCE(p_price_modifier, price_modifier)
+   WHERE id = p_id;
+
+  SELECT id, item_option_id, name, price_modifier, updated_at
+    FROM item_option_value WHERE id = p_id;
+END //
+
+DROP PROCEDURE IF EXISTS sp_item_option_value_delete //
+CREATE PROCEDURE sp_item_option_value_delete(IN p_id INT UNSIGNED)
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM item_option_value WHERE id = p_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Item option value not found.';
+  END IF;
+  DELETE FROM item_option_value WHERE id = p_id;
 END //
 
 

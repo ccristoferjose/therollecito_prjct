@@ -47,16 +47,34 @@ export default function UserManagement() {
       phone: user.phone || '',
       role: user.role_name,
       locationId: user.location_id || '',
+      password: '',
+      confirmPassword: '',
     });
     setError(null);
   }
 
   async function handleEdit(e) {
     e.preventDefault();
-    setSaving(true);
     setError(null);
+    const newPassword = editForm.password || '';
+    if (newPassword) {
+      if (newPassword.length < 8) {
+        setError('Password must be at least 8 characters.');
+        return;
+      }
+      if (newPassword !== editForm.confirmPassword) {
+        setError('Passwords do not match.');
+        return;
+      }
+    }
+    setSaving(true);
     try {
-      await api.put(`/users/${editUser.id}`, editForm, token);
+      // Profile fields only — the password has its own endpoint.
+      const { password, confirmPassword, ...profile } = editForm;
+      await api.put(`/users/${editUser.id}`, profile, token);
+      if (newPassword) {
+        await api.patch(`/users/${editUser.id}/password`, { password: newPassword }, token);
+      }
       setEditUser(null);
       refetch();
     } catch (err) {
@@ -105,6 +123,7 @@ export default function UserManagement() {
   }
 
   const staffList = Array.isArray(staff) ? staff : [];
+  const editingSelf = !!editUser && editUser.id === currentUser?.id;
 
   return (
     <div>
@@ -173,38 +192,41 @@ export default function UserManagement() {
                   )}
                   <span>{formatDate(user.created_at)}</span>
                 </div>
-                {/* Actions */}
-                {!isSelf && (
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button
-                      onClick={() => openEdit(user)}
-                      className="rounded-lg p-2 text-text-secondary hover:bg-gray-100 transition-colors"
-                      title="Edit user"
-                    >
-                      <Pencil size={16} />
-                    </button>
-                    <button
-                      onClick={() => handleToggleActive(user.id, user.is_active)}
-                      className={`rounded-lg p-2 transition-colors ${
-                        user.is_active
-                          ? 'text-success hover:bg-green-50'
-                          : 'text-text-secondary hover:bg-gray-100'
-                      }`}
-                      title={user.is_active ? 'Disable user' : 'Enable user'}
-                    >
-                      {user.is_active ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
-                    </button>
-                    {!user.is_active && (
+                {/* Actions — Edit (incl. your own row, e.g. to change your own
+                    password); disable/delete stay hidden for your own account. */}
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => openEdit(user)}
+                    className="rounded-lg p-2 text-text-secondary hover:bg-gray-100 transition-colors"
+                    title="Edit user / change password"
+                  >
+                    <Pencil size={16} />
+                  </button>
+                  {!isSelf && (
+                    <>
                       <button
-                        onClick={() => setConfirmDelete(user)}
-                        className="rounded-lg p-2 text-text-secondary hover:text-error hover:bg-red-50 transition-colors"
-                        title="Delete user"
+                        onClick={() => handleToggleActive(user.id, user.is_active)}
+                        className={`rounded-lg p-2 transition-colors ${
+                          user.is_active
+                            ? 'text-success hover:bg-green-50'
+                            : 'text-text-secondary hover:bg-gray-100'
+                        }`}
+                        title={user.is_active ? 'Disable user' : 'Enable user'}
                       >
-                        <Trash2 size={16} />
+                        {user.is_active ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
                       </button>
-                    )}
-                  </div>
-                )}
+                      {!user.is_active && (
+                        <button
+                          onClick={() => setConfirmDelete(user)}
+                          className="rounded-lg p-2 text-text-secondary hover:text-error hover:bg-red-50 transition-colors"
+                          title="Delete user"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </Card>
             );
           })}
@@ -291,11 +313,14 @@ export default function UserManagement() {
             <Input label="Phone" name="phone" value={editForm.phone} onChange={handleEditChange} />
             <div>
               <label className="block text-sm font-medium text-text mb-1">Role</label>
-              <select name="role" value={editForm.role} onChange={handleEditChange}
-                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
+              <select name="role" value={editForm.role} onChange={handleEditChange} disabled={editingSelf}
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60 disabled:cursor-not-allowed">
                 <option value="manager">Manager (Kitchen)</option>
                 <option value="admin">Admin</option>
               </select>
+              {editingSelf && (
+                <p className="text-xs text-text-secondary mt-1">You can't change your own role.</p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-text mb-1">Assigned Location</label>
@@ -307,6 +332,33 @@ export default function UserManagement() {
                 ))}
               </select>
             </div>
+
+            {/* Optional password change — blank leaves the current password. */}
+            <div className="border-t border-border pt-4">
+              <p className="text-sm font-medium text-text">
+                {editingSelf ? 'Change your password' : 'Change password'}
+              </p>
+              <p className="text-xs text-text-secondary mb-3">Leave blank to keep the current password.</p>
+              <div className="space-y-4">
+                <Input
+                  label="New Password"
+                  name="password"
+                  type="password"
+                  value={editForm.password || ''}
+                  onChange={handleEditChange}
+                  autoComplete="new-password"
+                />
+                <Input
+                  label="Confirm New Password"
+                  name="confirmPassword"
+                  type="password"
+                  value={editForm.confirmPassword || ''}
+                  onChange={handleEditChange}
+                  autoComplete="new-password"
+                />
+              </div>
+            </div>
+
             {error && (
               <div className="rounded-lg bg-red-50 border border-error/20 p-3 text-sm text-error">{error}</div>
             )}

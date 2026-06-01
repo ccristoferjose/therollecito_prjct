@@ -35,6 +35,11 @@ async function updateStaff(userId, { email, firstName, lastName, phone, role, lo
   return rows[0];
 }
 
+async function changePassword(userId, password) {
+  const hash = await bcrypt.hash(password, 12);
+  await db.call('sp_staff_update_password', [userId, hash]);
+}
+
 async function toggleActive(userId, isActive) {
   const result = await db.call('sp_staff_toggle_active', [userId, isActive ? 1 : 0]);
   const rows = Array.isArray(result[0]) ? result[0] : result;
@@ -45,4 +50,4 @@ async function deleteStaff(userId) {
   await db.call('sp_staff_delete', [userId]);
 }
 
-module.exports = { getByFirebaseUid, listStaff, createStaff, updateStaff, updateRole, toggleActive, deleteStaff };
+module.exports = { getByFirebaseUid, listStaff, createStaff, updateStaff, updateRole, changePassword, toggleActive, deleteStaff };

@@ -1,6 +1,9 @@
 /backend/node_modules
 /backend/dist
+# Env files — ignore all variants (dev + LIVE prod secrets), keep the example.
 /backend/.env
+/backend/.env.*
+!/backend/.env.example
 # Firebase service account — contains a private key, must never be committed.
 firebase-service-account.json
 *-firebase-adminsdk-*.json

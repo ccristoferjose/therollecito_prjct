@@ -29,6 +29,11 @@ const env = {
     secretKey: process.env.STRIPE_SECRET_KEY,
     publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+    // Fee passthrough — added to total_amount at sp_order_calculate_total
+    // time so the customer covers Stripe's percent + fixed fee.
+    // Defaults to Stripe US standard (2.9% + $0.30). Override per region.
+    feePercent: parseFloat(process.env.STRIPE_FEE_PERCENT) || 0.029,
+    feeFixed: parseFloat(process.env.STRIPE_FEE_FIXED) || 0.30,
   },
 
   cors: {
@@ -41,6 +46,9 @@ const env = {
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     bucket: process.env.S3_BUCKET,
     publicUrlBase: process.env.S3_PUBLIC_URL_BASE, // optional: CloudFront or custom domain
+    // S3-compatible endpoint override. Set in dev to a local MinIO server
+    // (e.g. http://localhost:9000); leave unset to use real AWS S3.
+    endpoint: process.env.S3_ENDPOINT || null,
   },
 };
 

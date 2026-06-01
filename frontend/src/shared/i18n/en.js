@@ -15,7 +15,7 @@ export default {
     title: 'Freshly Baked Happiness',
     titleHighlight: 'in Every Roll',
     subtitle:
-      'Hand-rolled cinnamon rolls, baked in small batches with real butter, warm spice, and a little bit of love. Artisan quality, served warm.',
+      'Try a cinnamon roll like the ones from home: dough hand-worked with fresh, organic ingredients, delicious cinnamon, and every little roll shaped with care. We bake them daily so they always come out tender and full of flavor. Perfect for breakfast, an after-meal treat, or to share with friends.',
     orderNow: 'Order Now',
     viewMenu: 'View Menu',
     viewLocations: 'View Locations',
@@ -36,7 +36,7 @@ export default {
   },
   about: {
     title: 'A small bakery with a big heart',
-    body: "The Rollecito started in a home kitchen, chasing the perfect cinnamon roll — buttery layers, a warm spice swirl, and just the right amount of glaze. Today every roll is still hand-rolled, small-batch, and baked the morning it's served.",
+    body: 'Our cinnamon rolls are handcrafted daily with fresh, organic ingredients. The dough is kneaded and every roll is shaped by hand to guarantee unmatched texture, aroma, and homemade flavor. Baked daily to bring you maximum freshness and quality.',
     pillOne: 'Real butter & fresh cream',
     pillTwo: 'Hand-rolled every morning',
     pillThree: 'Small-batch recipes',
