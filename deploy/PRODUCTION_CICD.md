@@ -69,19 +69,31 @@ goes in `PROD_DB_HOST`.
 
 ---
 
-## ⚠️ Database migrations are NOT automated
-The workflow ships application code only. Schema changes and new stored
-procedures (e.g. `sp_staff_update_password`) must be applied to the production
-DB manually:
+## Database migrations (automated, with a one-time baseline)
+`deploy/db-migrate.sh` runs as a workflow step **before** the backend deploys:
+it applies any `backend/database/migrations/*.sql` not yet recorded (tracked in
+a `schema_migrations` table, each runs once) and re-loads
+`stored_procedures.sql` every time (procedures are `DROP/CREATE`, so this keeps
+prod SPs — like `sp_staff_update_password` — in sync).
 
+**One-time baseline.** Your prod DB likely already has migrations 001–004
+applied. Record them as applied **without** re-running them, once, before the
+first automated deploy:
 ```bash
-mysql -h <PROD_DB_HOST> -uroot -p restaurant_ordering < backend/database/migrations/00X_*.sql
-mysql -h <PROD_DB_HOST> -uroot -p restaurant_ordering < backend/database/stored_procedures.sql
+DB_HOST=<host> DB_USER=root DB_PASSWORD=<pw> DB_NAME=restaurant_ordering \
+  ./deploy/db-migrate.sh --baseline
 ```
-Do this **before** approving a deploy that depends on the new objects.
+Skip this and the first deploy will try to re-run those `ALTER`s and fail.
+
+**Reachability.** GitHub-hosted runners use dynamic IPs. The DB must be
+reachable from them — enable public access + an IP allowlist on the managed DB,
+or use a self-hosted runner inside the VPC. `DB_SSL_MODE=REQUIRED` is set in the
+workflow so the connection uses TLS.
+
+Extra secret needed for this step: `PROD_DB_PORT` (optional, defaults to 3306).
 
 ## How a deploy flows
 1. Merge to `main` (or run the workflow manually).
 2. The `deploy` job starts and **waits for your approval** (if reviewers are set).
-3. On approval: build + push backend image → deploy container → resolve its URL
-   → build frontend with that URL → deploy to Amplify.
+3. On approval: apply DB migrations + SPs → build + push backend image → deploy
+   container → resolve its URL → build frontend with that URL → deploy to Amplify.

@@ -52,6 +52,24 @@ jobs:
             -o /usr/local/bin/lightsailctl
           sudo chmod +x /usr/local/bin/lightsailctl
 
+      - name: Install MySQL client
+        run: sudo apt-get update && sudo apt-get install -y mysql-client
+
+      # Applies pending schema migrations and (re)loads stored procedures BEFORE
+      # the new backend code goes live, so objects like sp_staff_update_password
+      # exist when the container starts. Idempotent — each migration runs once,
+      # SPs are DROP/CREATE. First time against an existing DB, baseline it once:
+      #   DB_HOST=... DB_PASSWORD=... ./deploy/db-migrate.sh --baseline
+      - name: Apply DB migrations + stored procedures
+        env:
+          DB_HOST: ${{ secrets.PROD_DB_HOST }}
+          DB_PORT: ${{ secrets.PROD_DB_PORT }}
+          DB_USER: ${{ secrets.PROD_DB_USER }}
+          DB_PASSWORD: ${{ secrets.PROD_DB_PASSWORD }}
+          DB_NAME: ${{ secrets.PROD_DB_NAME }}
+          DB_SSL_MODE: REQUIRED
+        run: ./deploy/db-migrate.sh
+
       # Builds the image, pushes it to Lightsail, and deploys the container with
       # the production env injected below. lightsail-backend.sh reads these from
       # the environment (exported vars win over any .env file).
