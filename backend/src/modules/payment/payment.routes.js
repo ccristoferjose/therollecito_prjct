@@ -32,13 +32,18 @@ router.post(
   paymentController.confirm
 );
 
-// Check if Stripe is configured and return publishable key for the frontend
+// Check if Stripe is configured and return publishable key for the frontend.
+// Also exposes the processing-fee rates so the cart can preview the fee
+// before the order is created (the server is the canonical source — frontend
+// only previews, server-side sp_order_calculate_total stamps the real value).
 router.get('/status', (_req, res) => {
   const stripe = require('../../config/stripe');
   const env = require('../../config/env');
   res.json({
     stripe_configured: !!stripe,
     publishable_key: env.stripe.publishableKey || null,
+    fee_percent: env.stripe.feePercent,
+    fee_fixed: env.stripe.feeFixed,
   });
 });
 

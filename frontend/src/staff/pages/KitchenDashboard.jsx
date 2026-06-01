@@ -14,7 +14,7 @@ import Button from '@shared/components/Button';
 import Spinner from '@shared/components/Spinner';
 
 // =============================================================================
-// KITCHEN KANBAN — iPad-first
+// KITCHEN — iPad-first
 //
 // Touch targets are ≥ 48px (Apple HIG minimum). Text sizes bumped so the
 // kitchen can read orders from arm's length. Three columns are always visible
@@ -120,8 +120,17 @@ function PriorityBadge() {
 
 // -----------------------------------------------------------------------------
 // KanbanCard — the actual order card in a column.
+//
+// Two render modes driven by `expanded`:
+//   compact  → just the essentials (order #, wait timer, items, total, action),
+//              so the kitchen can scan many orders at once.
+//   expanded → full detail (customer, options/toppings, notes, secondary
+//              actions). The parent ensures only ONE card across all columns
+//              is expanded at a time.
+// Tapping the card body toggles. Inner buttons stop propagation so they
+// don't accidentally collapse/expand the card.
 // -----------------------------------------------------------------------------
-function KanbanCard({ order, column, onAdvance, onPrioritize, onCancel }) {
+function KanbanCard({ order, column, expanded, onSelect, onAdvance, onPrioritize, onCancel }) {
   const [advancing, setAdvancing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
@@ -139,7 +148,8 @@ function KanbanCard({ order, column, onAdvance, onPrioritize, onCancel }) {
     };
   }, [menuOpen]);
 
-  async function handleAdvance() {
+  async function handleAdvance(e) {
+    e?.stopPropagation();
     setAdvancing(true);
     try {
       await onAdvance(order.id, column.nextStatus);
@@ -148,155 +158,191 @@ function KanbanCard({ order, column, onAdvance, onPrioritize, onCancel }) {
     }
   }
 
+  const stop = (e) => e.stopPropagation();
+
   return (
     <article
-      className={`relative rounded-2xl bg-surface shadow-[var(--shadow-card)] overflow-hidden ${column.accent} ${
+      onClick={() => onSelect(order.id)}
+      className={`relative rounded-2xl bg-surface overflow-hidden cursor-pointer transition-all duration-150 ${column.accent} ${
         order.is_priority ? 'ring-2 ring-red-400' : ''
+      } ${
+        expanded
+          ? 'shadow-[var(--shadow-elevated)] ring-2 ring-primary/40'
+          : 'shadow-[var(--shadow-card)] hover:shadow-md'
       }`}
     >
-      {/* Card header: order number + wait + actions menu */}
-      <div className="flex items-start justify-between px-4 pt-4 pb-2">
+      {/* Card header: order number + wait + actions menu (always visible) */}
+      <div className={`flex items-start justify-between px-4 ${expanded ? 'pt-4 pb-2' : 'py-2.5'}`}>
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-2xl font-extrabold text-primary-dark">
+          <span className={`font-extrabold text-primary-dark ${expanded ? 'text-2xl' : 'text-xl'}`}>
             {formatOrderNumber(order)}
           </span>
           <WaitTimer createdAt={order.created_at} />
-        </div>
-
-        {/* Overflow menu (priority/cancel) — 48x48 hit area */}
-        <div className="relative" ref={menuRef}>
-          <button
-            type="button"
-            onClick={() => setMenuOpen((v) => !v)}
-            aria-label="More actions"
-            className="-mr-2 -mt-1 flex h-11 w-11 items-center justify-center rounded-full text-primary-dark/70 hover:bg-primary-light/50 active:bg-primary-light/80 transition-colors"
-          >
-            <MoreVertical size={22} />
-          </button>
-          {menuOpen && (
-            <div className="absolute right-0 top-12 z-20 min-w-[210px] rounded-2xl bg-surface shadow-[var(--shadow-elevated)] border border-border/60 overflow-hidden">
-              {column.status !== 'PAID' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onPrioritize(order);
-                  }}
-                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left text-base font-semibold text-amber-800 hover:bg-amber-50 active:bg-amber-100"
-                >
-                  <RotateCcw size={18} />
-                  Send back to queue
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  setMenuOpen(false);
-                  onCancel(order);
-                }}
-                className="w-full flex items-center gap-3 px-4 py-3.5 text-left text-base font-semibold text-red-700 hover:bg-red-50 active:bg-red-100 border-t border-border/60"
-              >
-                <XCircle size={18} />
-                Cancel &amp; refund
-              </button>
-            </div>
+          {!expanded && (
+            <span className="text-xs font-semibold text-text-secondary">
+              · {(order.items?.length || 0)} item{(order.items?.length || 0) !== 1 ? 's' : ''}
+            </span>
           )}
         </div>
-      </div>
 
-      {/* Badges row */}
-      {(order.is_priority || order.payment_status) && (
-        <div className="px-4 pb-2 flex items-center gap-2 flex-wrap">
-          {order.is_priority ? <PriorityBadge /> : null}
-          <PaymentBadge status={order.payment_status} />
-        </div>
-      )}
-
-      {/* Customer row */}
-      <div className="px-4 py-2 border-t border-border/60 flex items-center gap-2 text-sm">
-        <User size={16} className="text-text-secondary shrink-0" />
-        <span className="font-semibold text-primary-dark truncate">
-          {order.guest_name || 'Registered User'}
-        </span>
-        {order.pickup_time && (
-          <span className="ml-auto text-xs text-text-secondary">
-            Pickup{' '}
-            {new Date(order.pickup_time).toLocaleTimeString([], {
-              hour: 'numeric',
-              minute: '2-digit',
-            })}
-          </span>
+        {/* Overflow menu — only when expanded (keeps compact card uncluttered) */}
+        {expanded && (
+          <div className="relative" ref={menuRef} onClick={stop}>
+            <button
+              type="button"
+              onClick={(e) => { stop(e); setMenuOpen((v) => !v); }}
+              aria-label="More actions"
+              className="-mr-2 -mt-1 flex h-11 w-11 items-center justify-center rounded-full text-primary-dark/70 hover:bg-primary-light/50 active:bg-primary-light/80 transition-colors"
+            >
+              <MoreVertical size={22} />
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 top-12 z-20 min-w-[210px] rounded-2xl bg-surface shadow-[var(--shadow-elevated)] border border-border/60 overflow-hidden">
+                {column.status !== 'PAID' && (
+                  <button
+                    type="button"
+                    onClick={(e) => { stop(e); setMenuOpen(false); onPrioritize(order); }}
+                    className="w-full flex items-center gap-3 px-4 py-3.5 text-left text-base font-semibold text-amber-800 hover:bg-amber-50 active:bg-amber-100"
+                  >
+                    <RotateCcw size={18} />
+                    Send back to queue
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => { stop(e); setMenuOpen(false); onCancel(order); }}
+                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left text-base font-semibold text-red-700 hover:bg-red-50 active:bg-red-100 border-t border-border/60"
+                >
+                  <XCircle size={18} />
+                  Cancel &amp; refund
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
-      {/* Items list */}
-      <div className="px-4 py-3 border-t border-border/60 space-y-2.5 bg-[#FFF1DC]/40">
-        {(order.items || []).map((item) => (
-          <div key={item.id} className="flex items-start gap-2.5">
-            <span className="shrink-0 flex items-center justify-center h-7 w-7 rounded-full bg-primary text-text-inverse text-sm font-extrabold">
-              {item.quantity}
-            </span>
-            <div className="flex-1 min-w-0">
-              <p className="text-base font-semibold text-primary-dark leading-tight">
-                {item.item_name}
-              </p>
-              {item.options?.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-1">
-                  {item.options.map((opt) => (
-                    <span
-                      key={opt.id}
-                      className="inline-block text-xs font-medium bg-white/90 text-primary-dark/80 border border-border/60 rounded-full px-2 py-0.5"
-                    >
-                      {opt.option_value_name}
-                    </span>
-                  ))}
-                </div>
-              )}
-              {item.notes && (
-                <p className="text-sm font-semibold text-accent-hover mt-1">
-                  ⚠ {item.notes}
-                </p>
-              )}
+      {/* === EXPANDED-ONLY SECTIONS === */}
+      {expanded && (
+        <>
+          {/* Badges row */}
+          {(order.is_priority || order.payment_status) && (
+            <div className="px-4 pb-2 flex items-center gap-2 flex-wrap">
+              {order.is_priority ? <PriorityBadge /> : null}
+              <PaymentBadge status={order.payment_status} />
             </div>
-          </div>
-        ))}
-      </div>
+          )}
 
-      {/* Priority reason (send-back note) */}
-      {order.is_priority && order.priority_reason && (
-        <div className="px-4 py-2 bg-red-50 border-t border-red-200">
-          <p className="text-sm text-red-800">
-            <strong>Sent back:</strong> {order.priority_reason}
-          </p>
-        </div>
+          {/* Customer row */}
+          <div className="px-4 py-2 border-t border-border/60 flex items-center gap-2 text-sm">
+            <User size={16} className="text-text-secondary shrink-0" />
+            <span className="font-semibold text-primary-dark truncate">
+              {order.guest_name || 'Registered User'}
+            </span>
+            {order.pickup_time && (
+              <span className="ml-auto text-xs text-text-secondary">
+                Pickup{' '}
+                {new Date(order.pickup_time).toLocaleTimeString([], {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </span>
+            )}
+          </div>
+
+          {/* Items list */}
+          <div className="px-4 py-3 border-t border-border/60 space-y-2.5 bg-[#FFF1DC]/40">
+            {(order.items || []).map((item) => (
+              <div key={item.id} className="flex items-start gap-2.5">
+                <span className="shrink-0 flex items-center justify-center h-7 w-7 rounded-full bg-primary text-text-inverse text-sm font-extrabold">
+                  {item.quantity}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-base font-semibold text-primary-dark leading-tight">
+                    {item.item_name}
+                  </p>
+                  {item.options?.length > 0 && (
+                    <div className="mt-1.5 rounded-lg bg-amber-50 border border-amber-300 px-2.5 py-1.5">
+                      <p className="text-[11px] font-bold uppercase tracking-wide text-amber-800 mb-1">
+                        + Toppings ({item.options.length})
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {item.options.map((opt) => (
+                          <span
+                            key={opt.id}
+                            className="inline-flex items-center text-sm font-bold text-amber-900 bg-white border border-amber-300 rounded-md px-2 py-0.5"
+                          >
+                            {opt.option_value_name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {item.notes && (
+                    <p className="text-sm font-semibold text-accent-hover mt-1">
+                      ⚠ {item.notes}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Priority reason (send-back note) */}
+          {order.is_priority && order.priority_reason && (
+            <div className="px-4 py-2 bg-red-50 border-t border-red-200">
+              <p className="text-sm text-red-800">
+                <strong>Sent back:</strong> {order.priority_reason}
+              </p>
+            </div>
+          )}
+        </>
       )}
 
-      {/* Footer: total + big primary action */}
-      <div className="px-4 pt-3 pb-4 border-t border-border/60">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-sm text-text-secondary">
-            <Package size={14} className="inline -mt-0.5 mr-1" />
-            {(order.items?.length || 0)} item
-            {(order.items?.length || 0) !== 1 ? 's' : ''}
+      {/* === COMPACT-ONLY ROW === customer + total + a hint that it's tappable */}
+      {!expanded && (
+        <div className="px-4 pb-2.5 flex items-center justify-between gap-2 text-sm">
+          <span className="font-semibold text-primary-dark truncate flex items-center gap-1.5">
+            <User size={14} className="text-text-secondary shrink-0" />
+            {order.guest_name || 'Registered User'}
+            {order.is_priority && <Flame size={14} className="text-red-600" />}
           </span>
-          <span className="text-lg font-extrabold text-primary">
+          <span className="text-base font-extrabold text-primary shrink-0">
             {formatCurrency(order.total_amount)}
           </span>
         </div>
+      )}
+
+      {/* Footer: total (expanded only) + big primary action — always visible */}
+      <div className={`px-4 ${expanded ? 'pt-3 pb-4 border-t border-border/60' : 'pb-3'}`}>
+        {expanded && (
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm text-text-secondary">
+              <Package size={14} className="inline -mt-0.5 mr-1" />
+              {(order.items?.length || 0)} item
+              {(order.items?.length || 0) !== 1 ? 's' : ''}
+            </span>
+            <span className="text-lg font-extrabold text-primary">
+              {formatCurrency(order.total_amount)}
+            </span>
+          </div>
+        )}
 
         <button
           type="button"
           onClick={handleAdvance}
           disabled={advancing}
-          className="w-full min-h-[56px] inline-flex items-center justify-center gap-2 rounded-2xl bg-primary text-text-inverse text-lg font-bold shadow-[var(--shadow-warm)] transition-all hover:bg-accent-hover active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
+          className={`w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-primary text-text-inverse font-bold shadow-[var(--shadow-warm)] transition-all hover:bg-accent-hover active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed ${
+            expanded ? 'min-h-[56px] text-lg' : 'min-h-[44px] text-base'
+          }`}
         >
           {advancing ? (
             <Spinner size="sm" />
           ) : (
             <>
-              <column.nextIcon size={22} />
+              <column.nextIcon size={expanded ? 22 : 18} />
               {column.nextAction}
-              <ArrowRight size={20} />
+              <ArrowRight size={expanded ? 20 : 16} />
             </>
           )}
         </button>
@@ -308,7 +354,7 @@ function KanbanCard({ order, column, onAdvance, onPrioritize, onCancel }) {
 // -----------------------------------------------------------------------------
 // KanbanColumn — one of three vertical lanes.
 // -----------------------------------------------------------------------------
-function KanbanColumn({ column, orders, loading, onAdvance, onPrioritize, onCancel }) {
+function KanbanColumn({ column, orders, loading, selectedOrderId, onSelect, onAdvance, onPrioritize, onCancel }) {
   const Icon = column.icon;
   return (
     <section className="flex-1 min-w-[300px] flex flex-col rounded-2xl bg-[#FFF1DC]/80 overflow-hidden">
@@ -353,6 +399,8 @@ function KanbanColumn({ column, orders, loading, onAdvance, onPrioritize, onCanc
               key={order.id}
               order={order}
               column={column}
+              expanded={order.id === selectedOrderId}
+              onSelect={onSelect}
               onAdvance={onAdvance}
               onPrioritize={onPrioritize}
               onCancel={onCancel}
@@ -371,6 +419,10 @@ export default function KitchenDashboard() {
   const { token, user } = useStaffAuth();
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [selectedLocationId, setSelectedLocationId] = useState(user?.location_id || null);
+  // Globally only ONE card is expanded at a time, across all three columns.
+  // null = all collapsed. Tapping a card toggles; selecting a different card
+  // implicitly collapses the previous one.
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
   const [priorityModal, setPriorityModal] = useState(null);
   const [cancelModal, setCancelModal] = useState(null);
   const [modalReason, setModalReason] = useState('');
@@ -461,10 +513,17 @@ export default function KitchenDashboard() {
   const advanceStatus = useCallback(
     async (orderId, newStatus) => {
       await api.patch(`/orders/${orderId}/status`, { status: newStatus }, token);
+      // Card disappears from this column once advanced; collapse so the next
+      // card doesn't auto-expand into the freed slot.
+      setSelectedOrderId((prev) => (prev === orderId ? null : prev));
       refetchAll();
     },
     [token, refetchAll]
   );
+
+  const toggleSelected = useCallback((orderId) => {
+    setSelectedOrderId((prev) => (prev === orderId ? null : orderId));
+  }, []);
 
   function openPriorityModal(order) {
     setModalReason('');
@@ -552,7 +611,7 @@ export default function KitchenDashboard() {
         <div className="flex items-center gap-4 flex-wrap">
           <h2 className="text-2xl font-extrabold text-primary-dark flex items-center gap-2">
             <ChefHat size={26} className="text-primary" />
-            Kitchen Kanban
+            Kitchen
           </h2>
           {isAdmin && (
             <div className="flex items-center gap-2">
@@ -597,6 +656,8 @@ export default function KitchenDashboard() {
               column={col}
               orders={columnOrders[col.status]}
               loading={anyLoading}
+              selectedOrderId={selectedOrderId}
+              onSelect={toggleSelected}
               onAdvance={advanceStatus}
               onPrioritize={openPriorityModal}
               onCancel={openCancelModal}

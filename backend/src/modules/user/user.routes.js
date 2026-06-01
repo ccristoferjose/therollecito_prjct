@@ -51,6 +51,18 @@ router.patch(
   userController.updateRole
 );
 
+// Change staff password (admin only)
+router.patch(
+  '/:id/password',
+  requireAuth,
+  requireRole('admin'),
+  [
+    body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters.'),
+    validateRequest,
+  ],
+  userController.changePassword
+);
+
 // Toggle staff active/inactive (admin only)
 router.patch(
   '/:id/active',

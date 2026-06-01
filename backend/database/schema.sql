@@ -234,6 +234,10 @@ CREATE TABLE `order` (
   total_amount    DECIMAL(10, 2)  NOT NULL DEFAULT 0.00,
   subtotal_amount DECIMAL(10, 2)  NOT NULL DEFAULT 0.00,
   discount_amount DECIMAL(10, 2)  NOT NULL DEFAULT 0.00,
+  -- Stripe fee passed through to the customer (percent + fixed). Computed by
+  -- sp_order_calculate_total and folded into total_amount so the PaymentIntent
+  -- charges the customer enough to cover the fee on top of the order subtotal.
+  processing_fee  DECIMAL(10, 2)  NOT NULL DEFAULT 0.00,
   promotion_id    INT UNSIGNED    NULL,
   promotion_code  VARCHAR(50)     NULL,
   notes           TEXT            NULL,
@@ -268,13 +272,18 @@ CREATE TABLE `order` (
 -- -----------------------------------------------------------------------------
 -- 11. ORDER_ITEM (detail level 1)
 --
---   unit_price is snapshotted at order time so historical orders remain
---   accurate after menu price changes.
+--   unit_price AND item_name are snapshotted at order time so historical
+--   orders remain readable after the underlying item is edited or deleted.
+--   item_id is nullable + ON DELETE SET NULL so admins can hard-delete
+--   menu items without losing order history; the snapshotted name keeps
+--   past orders displayable, and a NULL item_id lets the reorder flow
+--   detect "item no longer available".
 -- -----------------------------------------------------------------------------
 CREATE TABLE order_item (
   id         INT UNSIGNED    NOT NULL AUTO_INCREMENT,
   order_id   INT UNSIGNED    NOT NULL,
-  item_id    INT UNSIGNED    NOT NULL,
+  item_id    INT UNSIGNED    NULL,
+  item_name  VARCHAR(150)    NULL,
   quantity   INT UNSIGNED    NOT NULL DEFAULT 1,
   unit_price DECIMAL(10, 2)  NOT NULL,
   notes      TEXT            NULL,
@@ -292,7 +301,7 @@ CREATE TABLE order_item (
 
   CONSTRAINT fk_order_item_item
     FOREIGN KEY (item_id) REFERENCES item (id)
-    ON UPDATE CASCADE ON DELETE RESTRICT
+    ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- -----------------------------------------------------------------------------
@@ -302,10 +311,14 @@ CREATE TABLE order_item (
 --   price_modifier is snapshotted at order time.
 -- -----------------------------------------------------------------------------
 CREATE TABLE order_item_option (
-  id                  INT UNSIGNED    NOT NULL AUTO_INCREMENT,
-  order_item_id       INT UNSIGNED    NOT NULL,
-  item_option_value_id INT UNSIGNED   NOT NULL,
-  price_modifier      DECIMAL(10, 2)  NOT NULL DEFAULT 0.00,
+  id                   INT UNSIGNED    NOT NULL AUTO_INCREMENT,
+  order_item_id        INT UNSIGNED    NOT NULL,
+  item_option_value_id INT UNSIGNED    NULL,
+  -- Snapshotted at order time so the order is still readable if the
+  -- option / option-value is later renamed or deleted from the menu.
+  option_name          VARCHAR(100)    NULL,
+  option_value_name    VARCHAR(100)    NULL,
+  price_modifier       DECIMAL(10, 2)  NOT NULL DEFAULT 0.00,
 
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -320,7 +333,7 @@ CREATE TABLE order_item_option (
 
   CONSTRAINT fk_order_item_option_value
     FOREIGN KEY (item_option_value_id) REFERENCES item_option_value (id)
-    ON UPDATE CASCADE ON DELETE RESTRICT
+    ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- -----------------------------------------------------------------------------

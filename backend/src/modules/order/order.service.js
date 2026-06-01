@@ -57,9 +57,12 @@ async function removeItem(orderItemId) {
 }
 
 async function calculateTotal(orderId, promotionCode) {
+  const env = require('../../config/env');
   const result = await db.call('sp_order_calculate_total', [
     orderId,
     promotionCode || null,
+    env.stripe.feePercent,
+    env.stripe.feeFixed,
   ]);
   const rows = Array.isArray(result[0]) ? result[0] : result;
   return rows[0];

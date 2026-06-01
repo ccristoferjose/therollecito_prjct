@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Plus, Pencil, Trash2, Package, MapPin, ChevronDown, ChevronRight, Upload, Image as ImageIcon } from 'lucide-react';
+import { Plus, Pencil, Trash2, Package, MapPin, ChevronDown, ChevronRight, Upload, Image as ImageIcon, X, Check } from 'lucide-react';
 import { useStaffAuth } from '@shared/context/StaffAuthContext';
 import { useFetch } from '@shared/hooks/useFetch';
 import { api } from '@shared/utils/api';
@@ -36,6 +36,8 @@ export default function MenuManagement() {
   const items = menuData?.items || [];
   const itemLocations = menuData?.itemLocations || [];
   const menus = menuData?.menus || [];
+  const allOptions = menuData?.options || [];
+  const allOptionValues = menuData?.optionValues || [];
 
   function getItemLocationIds(itemId) {
     return itemLocations.filter((il) => il.item_id === itemId).map((il) => il.location_id);
@@ -384,6 +386,22 @@ export default function MenuManagement() {
             </div>
           </div>
 
+          {/* Extras / Customizations — only visible after the item exists, since
+              option groups need an item_id. For new items, prompt to save first. */}
+          {editingItem ? (
+            <ExtrasEditor
+              itemId={editingItem.id}
+              options={allOptions.filter((o) => o.item_id === editingItem.id)}
+              values={allOptionValues}
+              token={token}
+              onChange={refetch}
+            />
+          ) : (
+            <div className="rounded-lg border border-dashed border-border bg-gray-50 p-3 text-xs text-text-secondary">
+              Save the item first, then re-open it to add extras / customizations.
+            </div>
+          )}
+
           <Button type="submit" variant="primary" className="w-full" disabled={saving}>
             {saving ? 'Saving...' : editingItem ? 'Update Item' : 'Create Item'}
           </Button>
@@ -401,6 +419,7 @@ export default function MenuManagement() {
         </form>
       </Modal>
 
+      {/* (ExtrasEditor sub-component is defined below the default export.) */}
       {/* Delete Confirmation Modal */}
       <Modal open={!!showDeleteConfirm} onClose={() => setShowDeleteConfirm(null)} title="Confirm Delete">
         <div className="space-y-4">
@@ -416,6 +435,279 @@ export default function MenuManagement() {
           </div>
         </div>
       </Modal>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ExtrasEditor — manages an item's option groups and their values inline.
+// Each operation hits the backend immediately and triggers a refetch via
+// onChange so the parent's data stays canonical (no local-state drift).
+// ---------------------------------------------------------------------------
+function ExtrasEditor({ itemId, options, values, token, onChange }) {
+  const [busy, setBusy] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+
+  async function handleAddGroup(e) {
+    e?.preventDefault();
+    const name = newGroupName.trim();
+    if (!name) return;
+    setBusy(true);
+    try {
+      await api.post('/menu/items/options', {
+        itemId,
+        name,
+        isRequired: false,
+        maxChoices: null,
+      }, token);
+      setNewGroupName('');
+      onChange();
+    } catch { /* surfaced by api */ } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeleteGroup(optionId) {
+    if (!confirm('Delete this option group and all its values?')) return;
+    setBusy(true);
+    try {
+      await api.delete(`/menu/items/options/${optionId}`, token);
+      onChange();
+    } catch { /* handled */ } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-primary-light/10 p-3 space-y-3">
+      <div className="flex items-center justify-between">
+        <label className="text-sm font-medium text-text">Extras / customizations</label>
+        <span className="text-[11px] text-text-secondary">
+          customers can pick these at checkout (with optional extra price)
+        </span>
+      </div>
+
+      {options.length === 0 && (
+        <p className="text-xs text-text-secondary italic">
+          No option groups yet. Create one below (e.g. "Extras", "Toppings", "Size").
+        </p>
+      )}
+
+      {options.map((opt) => (
+        <ExtrasGroup
+          key={opt.id}
+          option={opt}
+          values={values.filter((v) => v.item_option_id === opt.id)}
+          token={token}
+          busy={busy}
+          setBusy={setBusy}
+          onChange={onChange}
+          onDelete={() => handleDeleteGroup(opt.id)}
+        />
+      ))}
+
+      {/* Add a new option group */}
+      <div className="flex items-center gap-2 pt-2 border-t border-border">
+        <input
+          type="text"
+          value={newGroupName}
+          onChange={(e) => setNewGroupName(e.target.value)}
+          placeholder="Group name (e.g. Extras)"
+          className="flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+          disabled={busy}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleAddGroup}
+          disabled={busy || !newGroupName.trim()}
+        >
+          <Plus size={12} /> Add group
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// One option group (e.g. "Extras") with its list of selectable values.
+function ExtrasGroup({ option, values, token, busy, setBusy, onChange, onDelete }) {
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(option.name);
+  const [newValueName, setNewValueName] = useState('');
+  const [newValuePrice, setNewValuePrice] = useState('');
+
+  async function saveName() {
+    const next = nameDraft.trim();
+    if (!next || next === option.name) {
+      setNameDraft(option.name);
+      setEditingName(false);
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.patch(`/menu/items/options/${option.id}`, { name: next }, token);
+      setEditingName(false);
+      onChange();
+    } catch { /* handled */ } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleAddValue(e) {
+    e?.preventDefault();
+    const name = newValueName.trim();
+    if (!name) return;
+    const price = parseFloat(newValuePrice) || 0;
+    setBusy(true);
+    try {
+      await api.post('/menu/items/options/values', {
+        itemOptionId: option.id,
+        name,
+        priceModifier: price,
+      }, token);
+      setNewValueName('');
+      setNewValuePrice('');
+      onChange();
+    } catch { /* handled */ } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg bg-surface border border-border p-3 space-y-2">
+      <div className="flex items-center gap-2">
+        {editingName ? (
+          <>
+            <input
+              autoFocus
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); saveName(); }
+                if (e.key === 'Escape') { setNameDraft(option.name); setEditingName(false); }
+              }}
+              onBlur={saveName}
+              className="flex-1 rounded border border-primary/40 px-2 py-1 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+            <button type="button" onClick={saveName} className="p-1 text-success" aria-label="save">
+              <Check size={14} />
+            </button>
+          </>
+        ) : (
+          <>
+            <h4 className="flex-1 font-semibold text-text">{option.name}</h4>
+            <button type="button" onClick={() => setEditingName(true)} className="p-1 rounded hover:bg-gray-100 text-text-secondary" aria-label="rename">
+              <Pencil size={12} />
+            </button>
+          </>
+        )}
+        <button type="button" onClick={onDelete} className="p-1 rounded hover:bg-red-50 text-text-secondary hover:text-error" aria-label="delete group">
+          <Trash2 size={12} />
+        </button>
+      </div>
+
+      <div className="space-y-1.5">
+        {values.length === 0 && (
+          <p className="text-[11px] text-text-secondary italic px-1">No options yet — add one below.</p>
+        )}
+        {values.map((v) => (
+          <ExtrasValueRow key={v.id} value={v} token={token} busy={busy} setBusy={setBusy} onChange={onChange} />
+        ))}
+      </div>
+
+      {/* Add new value */}
+      <div className="flex items-center gap-2 pt-1.5 border-t border-border">
+        <input
+          type="text"
+          value={newValueName}
+          onChange={(e) => setNewValueName(e.target.value)}
+          placeholder="Value (e.g. Extra cheese)"
+          className="flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
+          disabled={busy}
+        />
+        <input
+          type="number"
+          step="0.01"
+          value={newValuePrice}
+          onChange={(e) => setNewValuePrice(e.target.value)}
+          placeholder="+0.00"
+          className="w-20 rounded-lg border border-border bg-surface px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
+          disabled={busy}
+        />
+        <button
+          type="button"
+          onClick={handleAddValue}
+          disabled={busy || !newValueName.trim()}
+          className="rounded-lg bg-primary px-2.5 py-1.5 text-xs text-text-inverse disabled:opacity-50 hover:bg-primary-dark"
+        >
+          <Plus size={12} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// One row for an option value, inline-editable. Saves on blur or Enter.
+function ExtrasValueRow({ value, token, busy, setBusy, onChange }) {
+  const [name, setName] = useState(value.name);
+  const [price, setPrice] = useState(String(value.price_modifier ?? 0));
+  const dirty = name.trim() !== value.name || parseFloat(price || 0) !== Number(value.price_modifier ?? 0);
+
+  async function save() {
+    if (!dirty || !name.trim()) {
+      setName(value.name);
+      setPrice(String(value.price_modifier ?? 0));
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.patch(`/menu/items/options/values/${value.id}`, {
+        name: name.trim(),
+        priceModifier: parseFloat(price) || 0,
+      }, token);
+      onChange();
+    } catch { /* handled */ } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!confirm(`Delete "${value.name}"?`)) return;
+    setBusy(true);
+    try {
+      await api.delete(`/menu/items/options/values/${value.id}`, token);
+      onChange();
+    } catch { /* handled */ } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } }}
+        className="flex-1 rounded border border-border bg-surface px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/30"
+        disabled={busy}
+      />
+      <span className="text-xs text-text-secondary">+$</span>
+      <input
+        type="number"
+        step="0.01"
+        value={price}
+        onChange={(e) => setPrice(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } }}
+        className="w-16 rounded border border-border bg-surface px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-primary/30"
+        disabled={busy}
+      />
+      <button type="button" onClick={handleDelete} className="p-1 rounded hover:bg-red-50 text-text-secondary hover:text-error" aria-label="delete value">
+        <X size={12} />
+      </button>
     </div>
   );
 }

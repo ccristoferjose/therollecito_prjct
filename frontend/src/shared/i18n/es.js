@@ -15,7 +15,7 @@ export default {
     title: 'Felicidad Reci\u00e9n Horneada',
     titleHighlight: 'en Cada Rollecito',
     subtitle:
-      'Rollos de canela hechos a mano, horneados en peque\u00f1os lotes con mantequilla real, especias c\u00e1lidas y mucho amor. Calidad artesanal, servida tibia.',
+      'Prueba un cinnamon roll como los de casa: masa trabajada a mano con ingredientes frescos y org\u00e1nicos, canela deliciosa y cada rollito enrollado con cari\u00f1o. Los horneamos a diario para que siempre est\u00e9n tiernos y llenos de sabor. Perfectos para tu desayuno, sobremesa o para compartir con amigos.',
     orderNow: 'Ordenar Ahora',
     viewMenu: 'Ver Men\u00fa',
     viewLocations: 'Ver Ubicaciones',
@@ -36,7 +36,7 @@ export default {
   },
   about: {
     title: 'Una peque\u00f1a panader\u00eda con gran coraz\u00f3n',
-    body: 'The Rollecito naci\u00f3 en una cocina casera, buscando el rollo de canela perfecto \u2014 capas mantequillosas, un espiral de especia c\u00e1lida y justo el glaseado correcto. Hoy cada rollo sigue siendo hecho a mano, en lotes peque\u00f1os, horneado la ma\u00f1ana que se sirve.',
+    body: 'Nuestros cinnamon rolls son elaborados a mano diariamente con ingredientes frescos y org\u00e1nicos. La masa se amasa y cada rollo se enrolla a mano para garantizar textura, aroma y un sabor casero inigualable. Horneados diariamente para ofrecerte la m\u00e1xima frescura y calidad.',
     pillOne: 'Mantequilla real y crema fresca',
     pillTwo: 'Hecho a mano cada ma\u00f1ana',
     pillThree: 'Recetas en lotes peque\u00f1os',

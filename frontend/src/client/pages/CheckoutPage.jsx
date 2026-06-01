@@ -225,9 +225,19 @@ export default function CheckoutPage() {
     }
   }, [schedule.mode, currentLocation?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Stripe fee rates come from /api/payments/status. Default to 0/0 until
+  // the status fetch resolves so the preview just shows subtotal, then the
+  // fee line appears once the rates land.
+  const [feeRates, setFeeRates] = useState({ percent: 0, fixed: 0 });
+
   const subtotal = total;
   const discount = appliedPromo?.discount_amount || 0;
-  const finalTotal = Math.max(0, subtotal - discount);
+  const preFeeTotal = Math.max(0, subtotal - discount);
+  // Same formula as backend sp_order_calculate_total — frontend just previews.
+  const processingFee = preFeeTotal > 0
+    ? Math.round((preFeeTotal * feeRates.percent + feeRates.fixed) * 100) / 100
+    : 0;
+  const finalTotal = preFeeTotal + processingFee;
 
   async function handleApplyPromo(e) {
     e?.preventDefault();
@@ -302,6 +312,11 @@ export default function CheckoutPage() {
       if (data.stripe_configured && data.publishable_key) {
         setStripePromise(loadStripe(data.publishable_key));
       }
+      // Fee rates for the cart preview (server still recalculates on submit).
+      setFeeRates({
+        percent: Number(data.fee_percent) || 0,
+        fixed: Number(data.fee_fixed) || 0,
+      });
     }).catch(() => setStripeConfigured(false));
   }, []);
 
@@ -647,6 +662,14 @@ export default function CheckoutPage() {
                 <div className="flex justify-between text-sm text-green-700">
                   <span>Discount ({appliedPromo.code})</span>
                   <span>−{formatCurrency(discount)}</span>
+                </div>
+              )}
+              {processingFee > 0 && (
+                <div className="flex justify-between text-sm text-text-secondary">
+                  <span title={`${(feeRates.percent * 100).toFixed(2)}% + ${formatCurrency(feeRates.fixed)} payment processing fee`}>
+                    Processing fee
+                  </span>
+                  <span>{formatCurrency(processingFee)}</span>
                 </div>
               )}
               <div className="flex justify-between text-lg font-bold pt-1.5 border-t border-border">

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { UserPlus, MapPin, Shield, ChefHat, ToggleLeft, ToggleRight, Trash2, Pencil } from 'lucide-react';
+import { UserPlus, MapPin, Shield, ChefHat, ToggleLeft, ToggleRight, Trash2, Pencil, KeyRound } from 'lucide-react';
 import { useStaffAuth } from '@shared/context/StaffAuthContext';
 import { useFetch } from '@shared/hooks/useFetch';
 import { api } from '@shared/utils/api';
@@ -29,6 +29,8 @@ export default function UserManagement() {
   });
   const [editUser, setEditUser] = useState(null);
   const [editForm, setEditForm] = useState({});
+  const [pwUser, setPwUser] = useState(null);
+  const [pwForm, setPwForm] = useState({ password: '', confirm: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -59,6 +61,34 @@ export default function UserManagement() {
       await api.put(`/users/${editUser.id}`, editForm, token);
       setEditUser(null);
       refetch();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openChangePassword(user) {
+    setPwUser(user);
+    setPwForm({ password: '', confirm: '' });
+    setError(null);
+  }
+
+  async function handleChangePassword(e) {
+    e.preventDefault();
+    setError(null);
+    if (pwForm.password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+    if (pwForm.password !== pwForm.confirm) {
+      setError('Passwords do not match.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.patch(`/users/${pwUser.id}/password`, { password: pwForm.password }, token);
+      setPwUser(null);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -182,6 +212,13 @@ export default function UserManagement() {
                       title="Edit user"
                     >
                       <Pencil size={16} />
+                    </button>
+                    <button
+                      onClick={() => openChangePassword(user)}
+                      className="rounded-lg p-2 text-text-secondary hover:bg-gray-100 transition-colors"
+                      title="Change password"
+                    >
+                      <KeyRound size={16} />
                     </button>
                     <button
                       onClick={() => handleToggleActive(user.id, user.is_active)}
@@ -312,6 +349,44 @@ export default function UserManagement() {
             )}
             <Button type="submit" variant="primary" className="w-full" disabled={saving}>
               {saving ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </form>
+        )}
+      </Modal>
+
+      {/* Change password modal */}
+      <Modal open={!!pwUser} onClose={() => setPwUser(null)} title="Change Password">
+        {pwUser && (
+          <form onSubmit={handleChangePassword} className="space-y-4">
+            <p className="text-sm text-text-secondary">
+              Set a new password for{' '}
+              <span className="font-medium text-text">{pwUser.first_name} {pwUser.last_name}</span>{' '}
+              ({pwUser.email}).
+            </p>
+            <Input
+              label="New Password"
+              name="password"
+              type="password"
+              value={pwForm.password}
+              onChange={(e) => setPwForm((p) => ({ ...p, password: e.target.value }))}
+              autoComplete="new-password"
+              required
+            />
+            <Input
+              label="Confirm Password"
+              name="confirm"
+              type="password"
+              value={pwForm.confirm}
+              onChange={(e) => setPwForm((p) => ({ ...p, confirm: e.target.value }))}
+              autoComplete="new-password"
+              required
+            />
+            <p className="text-xs text-text-secondary">Minimum 8 characters.</p>
+            {error && (
+              <div className="rounded-lg bg-red-50 border border-error/20 p-3 text-sm text-error">{error}</div>
+            )}
+            <Button type="submit" variant="primary" className="w-full" disabled={saving}>
+              {saving ? 'Updating...' : 'Update Password'}
             </Button>
           </form>
         )}

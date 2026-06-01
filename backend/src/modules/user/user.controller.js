@@ -21,6 +21,11 @@ const updateRole = asyncHandler(async (req, res) => {
   res.json({ message: 'Role updated.' });
 });
 
+const changePassword = asyncHandler(async (req, res) => {
+  await userService.changePassword(req.params.id, req.body.password);
+  res.json({ message: 'Password updated.' });
+});
+
 const toggleActive = asyncHandler(async (req, res) => {
   const result = await userService.toggleActive(req.params.id, req.body.is_active);
   res.json(result);
@@ -31,4 +36,4 @@ const deleteStaff = asyncHandler(async (req, res) => {
   res.status(204).end();
 });
 
-module.exports = { listStaff, createStaff, updateStaff, updateRole, toggleActive, deleteStaff };
+module.exports = { listStaff, createStaff, updateStaff, updateRole, changePassword, toggleActive, deleteStaff };
