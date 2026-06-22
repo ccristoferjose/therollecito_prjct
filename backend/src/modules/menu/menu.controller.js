@@ -66,6 +66,11 @@ const deleteItemOption = asyncHandler(async (req, res) => {
   res.status(204).end();
 });
 
+const cloneItemOption = asyncHandler(async (req, res) => {
+  const option = await menuService.cloneItemOption(req.body);
+  res.status(201).json(option);
+});
+
 const createItemOptionValue = asyncHandler(async (req, res) => {
   const value = await menuService.createItemOptionValue(req.body);
   res.status(201).json(value);
@@ -95,6 +100,7 @@ module.exports = {
   createItemOption,
   updateItemOption,
   deleteItemOption,
+  cloneItemOption,
   createItemOptionValue,
   updateItemOptionValue,
   deleteItemOptionValue,

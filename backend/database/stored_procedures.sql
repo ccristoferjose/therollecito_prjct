@@ -1420,6 +1420,46 @@ BEGIN
   DELETE FROM item_option_value WHERE id = p_id;
 END //
 
+-- Deep-copy an existing option group (and all its values, names + prices) onto
+-- another item as a brand-new, INDEPENDENT group. Editing the copy afterwards
+-- never touches the source — every row is a fresh insert. Used by the admin
+-- "Copy from existing group" action so toppings don't have to be retyped.
+DROP PROCEDURE IF EXISTS sp_item_option_clone //
+CREATE PROCEDURE sp_item_option_clone(
+  IN p_source_option_id INT UNSIGNED,
+  IN p_target_item_id   INT UNSIGNED
+)
+BEGIN
+  DECLARE v_new_id INT UNSIGNED;
+
+  DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; RESIGNAL; END;
+
+  IF NOT EXISTS (SELECT 1 FROM item_option WHERE id = p_source_option_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Source option group not found.';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_target_item_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Target item not found.';
+  END IF;
+
+  START TRANSACTION;
+
+  -- 1. Copy the group itself onto the target item.
+  INSERT INTO item_option (item_id, name, is_required, max_choices)
+  SELECT p_target_item_id, name, is_required, max_choices
+    FROM item_option WHERE id = p_source_option_id;
+  SET v_new_id = LAST_INSERT_ID();
+
+  -- 2. Copy every value (name + price_modifier) into the new group.
+  INSERT INTO item_option_value (item_option_id, name, price_modifier)
+  SELECT v_new_id, name, price_modifier
+    FROM item_option_value WHERE item_option_id = p_source_option_id;
+
+  COMMIT;
+
+  SELECT id, item_id, name, is_required, max_choices, created_at
+    FROM item_option WHERE id = v_new_id;
+END //
+
 
 -- #############################################################################
 -- #  SECTION 5: LOCATION MANAGEMENT

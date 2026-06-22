@@ -135,6 +135,21 @@ router.delete(
   menuController.deleteItemOption
 );
 
+// Admin: clone an existing option group (+ its values) onto another item as a
+// new independent copy. Lets admins reuse a topping group without retyping it;
+// the copy is editable without affecting the source.
+router.post(
+  '/items/options/clone',
+  requireAuth,
+  requireRole('admin', 'manager'),
+  [
+    body('sourceOptionId').isInt({ gt: 0 }),
+    body('targetItemId').isInt({ gt: 0 }),
+    validateRequest,
+  ],
+  menuController.cloneItemOption
+);
+
 // Admin: create item option value
 router.post(
   '/items/options/values',

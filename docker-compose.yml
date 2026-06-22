@@ -143,6 +143,35 @@ services:
     depends_on:
       - backend
 
+  # ---------------------------------------------------------------------------
+  # Frontend (Next.js 15 — the migrated app)
+  # Runs alongside the legacy Vite frontend during the transition. The Next
+  # server proxies /api to the backend over the compose network (BACKEND_ORIGIN);
+  # the browser hits the backend's published :3001 for sockets.
+  # Visit http://localhost:3000
+  # ---------------------------------------------------------------------------
+  frontend-next:
+    build: ./frontend-next
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # Bind-mount source for HMR; keep the image's node_modules + .next intact.
+      - ./frontend-next/src:/app/src
+      - ./frontend-next/public:/app/public
+      - ./frontend-next/next.config.ts:/app/next.config.ts
+      - ./frontend-next/.env.local:/app/.env.local:ro
+    environment:
+      # Next server → backend over the compose network (SSR + /api rewrite).
+      BACKEND_ORIGIN: http://backend:3001
+      # Browser uses the relative /api proxy; sockets hit the published port.
+      NEXT_PUBLIC_API_URL: ""
+      NEXT_PUBLIC_SOCKET_URL: http://localhost:3001
+      # File-watch polling for HMR inside the container bind-mount.
+      WATCHPACK_POLLING: "true"
+    depends_on:
+      - backend
+
 volumes:
   mysql_data:
   minio_data:
