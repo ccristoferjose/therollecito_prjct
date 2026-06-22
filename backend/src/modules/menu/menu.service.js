@@ -105,6 +105,14 @@ async function deleteItemOption(optionId) {
   await db.call('sp_item_option_delete', [optionId]);
 }
 
+// Deep-copy an existing option group (+ its values) onto another item as a new
+// independent group. Returns the newly created group row.
+async function cloneItemOption({ sourceOptionId, targetItemId }) {
+  const result = await db.call('sp_item_option_clone', [sourceOptionId, targetItemId]);
+  const rows = Array.isArray(result[0]) ? result[0] : result;
+  return rows[0];
+}
+
 async function createItemOptionValue({ itemOptionId, name, priceModifier }) {
   const result = await db.call('sp_item_option_value_create', [
     itemOptionId, name, priceModifier || 0,
@@ -141,6 +149,7 @@ module.exports = {
   createItemOption,
   updateItemOption,
   deleteItemOption,
+  cloneItemOption,
   createItemOptionValue,
   updateItemOptionValue,
   deleteItemOptionValue,
