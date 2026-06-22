@@ -514,26 +514,28 @@ function ExtrasEditor({
         </Button>
       </div>
 
-      {sourceGroups.length > 0 && (
-        <div className="flex items-center gap-2">
-          <select
-            value={copySourceId}
-            onChange={(e) => setCopySourceId(e.target.value)}
-            className="flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            disabled={busy}
-          >
-            <option value="">Copy an existing group (with its prices)…</option>
-            {sourceGroups.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name} — from {itemName(g.item_id)}
-              </option>
-            ))}
-          </select>
-          <Button type="button" variant="outline" size="sm" onClick={handleCopyGroup} disabled={busy || !copySourceId}>
-            <Plus size={12} /> Copy
-          </Button>
-        </div>
-      )}
+      <div className="flex items-center gap-2">
+        <select
+          value={copySourceId}
+          onChange={(e) => setCopySourceId(e.target.value)}
+          className="flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60"
+          disabled={busy || sourceGroups.length === 0}
+        >
+          <option value="">
+            {sourceGroups.length === 0
+              ? 'No other groups to copy yet'
+              : 'Copy an existing group (with its prices)…'}
+          </option>
+          {sourceGroups.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.name} — from {itemName(g.item_id)}
+            </option>
+          ))}
+        </select>
+        <Button type="button" variant="outline" size="sm" onClick={handleCopyGroup} disabled={busy || !copySourceId}>
+          <Plus size={12} /> Copy
+        </Button>
+      </div>
     </div>
   );
 }
