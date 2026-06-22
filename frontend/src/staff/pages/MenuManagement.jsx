@@ -393,6 +393,8 @@ export default function MenuManagement() {
               itemId={editingItem.id}
               options={allOptions.filter((o) => o.item_id === editingItem.id)}
               values={allOptionValues}
+              allOptions={allOptions}
+              items={items}
               token={token}
               onChange={refetch}
             />
@@ -444,9 +446,15 @@ export default function MenuManagement() {
 // Each operation hits the backend immediately and triggers a refetch via
 // onChange so the parent's data stays canonical (no local-state drift).
 // ---------------------------------------------------------------------------
-function ExtrasEditor({ itemId, options, values, token, onChange }) {
+function ExtrasEditor({ itemId, options, values, allOptions, items, token, onChange }) {
   const [busy, setBusy] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
+  const [copySourceId, setCopySourceId] = useState('');
+
+  // Option groups that live on OTHER items — candidates to copy from. The copy
+  // is fully independent, so editing it later never touches the source.
+  const sourceGroups = (allOptions || []).filter((o) => o.item_id !== itemId);
+  const itemName = (id) => (items || []).find((i) => i.id === id)?.name ?? `item #${id}`;
 
   async function handleAddGroup(e) {
     e?.preventDefault();
@@ -461,6 +469,19 @@ function ExtrasEditor({ itemId, options, values, token, onChange }) {
         maxChoices: null,
       }, token);
       setNewGroupName('');
+      onChange();
+    } catch { /* surfaced by api */ } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCopyGroup() {
+    const sourceOptionId = parseInt(copySourceId, 10);
+    if (!sourceOptionId) return;
+    setBusy(true);
+    try {
+      await api.post('/menu/items/options/clone', { sourceOptionId, targetItemId: itemId }, token);
+      setCopySourceId('');
       onChange();
     } catch { /* surfaced by api */ } finally {
       setBusy(false);
@@ -526,6 +547,35 @@ function ExtrasEditor({ itemId, options, values, token, onChange }) {
           <Plus size={12} /> Add group
         </Button>
       </div>
+
+      {/* Copy an existing group (with its values + prices) from another item.
+          The copy is independent — editing it never affects the source. */}
+      {sourceGroups.length > 0 && (
+        <div className="flex items-center gap-2">
+          <select
+            value={copySourceId}
+            onChange={(e) => setCopySourceId(e.target.value)}
+            className="flex-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            disabled={busy}
+          >
+            <option value="">Copy an existing group (with its prices)…</option>
+            {sourceGroups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name} — from {itemName(g.item_id)}
+              </option>
+            ))}
+          </select>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleCopyGroup}
+            disabled={busy || !copySourceId}
+          >
+            <Plus size={12} /> Copy
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
