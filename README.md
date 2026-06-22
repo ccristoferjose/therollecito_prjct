@@ -71,3 +71,13 @@ Status transitions are enforced at the database level — no skipping or reversi
    ./backend/database/run.sh
    ```
 3. Frontend and backend setup instructions will be added as those layers are built.
+
+## Deployment
+
+Manual production deploy instructions live in `deploy/MANUAL_DEPLOYMENT.md`.
+
+Important split:
+
+- `docker-compose.yml` is local development only. It starts MinIO and overrides S3 with `S3_ENDPOINT=http://minio:9000`.
+- `docker-compose.prod.yml` is the only Compose file intended for a manually managed production server.
+- `deploy/lightsail-backend.sh` is the preferred backend production deploy path for AWS Lightsail Container Service.

@@ -1,8 +1,22 @@
 const asyncHandler = require('../../utils/asyncHandler');
 const menuService = require('./menu.service');
+// Shared pickup-time normaliser — keeps this route's handling of local wall
+// clock identical to the /api/service-periods routes.
+const { toMysqlDateTime } = require('../service-period/service-period.service');
 
 const getFullMenu = asyncHandler(async (req, res) => {
   const data = await menuService.getFullMenu(req.params.locationId);
+  res.json(data);
+});
+
+// Public: menu for a location at a given pickup time. The pickup time is the
+// source of truth for which service period, and therefore which menu, applies.
+const getFullMenuForPickup = asyncHandler(async (req, res) => {
+  const data = await menuService.getFullMenuForPickup(
+    req.params.locationId,
+    // Local wall clock, no offset — normalised for MySQL.
+    toMysqlDateTime(req.query.pickupTime),
+  );
   res.json(data);
 });
 
@@ -66,6 +80,11 @@ const deleteItemOption = asyncHandler(async (req, res) => {
   res.status(204).end();
 });
 
+const cloneItemOption = asyncHandler(async (req, res) => {
+  const option = await menuService.cloneItemOption(req.body);
+  res.status(201).json(option);
+});
+
 const createItemOptionValue = asyncHandler(async (req, res) => {
   const value = await menuService.createItemOptionValue(req.body);
   res.status(201).json(value);
@@ -81,8 +100,31 @@ const deleteItemOptionValue = asyncHandler(async (req, res) => {
   res.status(204).end();
 });
 
+
+const listMenuCategories = asyncHandler(async (_req, res) => {
+  res.json(await menuService.listMenuCategories());
+});
+
+const attachCategoryToMenu = asyncHandler(async (req, res) => {
+  await menuService.attachCategoryToMenu(
+    req.params.menuId,
+    req.params.categoryId,
+    req.body.sort_order,
+  );
+  res.status(204).end();
+});
+
+const detachCategoryFromMenu = asyncHandler(async (req, res) => {
+  await menuService.detachCategoryFromMenu(req.params.menuId, req.params.categoryId);
+  res.status(204).end();
+});
+
 module.exports = {
   getFullMenu,
+  getFullMenuForPickup,
+  listMenuCategories,
+  attachCategoryToMenu,
+  detachCategoryFromMenu,
   getAllMenu,
   createMenu,
   createCategory,
@@ -95,6 +137,7 @@ module.exports = {
   createItemOption,
   updateItemOption,
   deleteItemOption,
+  cloneItemOption,
   createItemOptionValue,
   updateItemOptionValue,
   deleteItemOptionValue,

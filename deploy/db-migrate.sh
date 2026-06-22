@@ -24,9 +24,9 @@
 #                                       # setup on a DB that already has them),
 #                                       # then load SPs.
 #
-# NOTE: the runner (GitHub Actions) must be able to reach the DB. A managed
-# MySQL behind a VPC/IP allowlist won't be reachable from GitHub-hosted runners
-# unless you enable public access (+ allowlist) or use a self-hosted runner.
+# NOTE: the machine running this script must be able to reach the DB. A managed
+# MySQL behind a VPC/IP allowlist may require public access plus an allowlist, or
+# running this from a host inside the same network.
 # =============================================================================
 set -euo pipefail
 

@@ -70,11 +70,11 @@ if [[ "${1:-}" == "--env" ]]; then
   APP_ID=$(get_app_id)
   [ -z "${APP_ID}" ] || [ "${APP_ID}" = "None" ] && error "App not found. Run --create first."
 
-  # Read from frontend/.env
-  ENV_FILE="${PROJECT_ROOT}/frontend/.env"
-  [ ! -f "${ENV_FILE}" ] && error "frontend/.env not found."
+  # Read from the production frontend env. The local frontend/.env is dev-only.
+  ENV_FILE="${PROJECT_ROOT}/frontend/.env.production"
+  [ ! -f "${ENV_FILE}" ] && error "frontend/.env.production not found."
 
-  info "Setting Amplify environment variables from frontend/.env..."
+  info "Setting Amplify environment variables from frontend/.env.production..."
 
   # Build environment map
   ENV_VARS=""
@@ -150,5 +150,5 @@ fi
 
 echo "Usage:"
 echo "  ./deploy/amplify-frontend.sh --create   # Create Amplify app"
-echo "  ./deploy/amplify-frontend.sh --env       # Set env vars from frontend/.env"
+echo "  ./deploy/amplify-frontend.sh --env       # Set env vars from frontend/.env.production"
 echo "  ./deploy/amplify-frontend.sh --deploy    # Build + deploy"

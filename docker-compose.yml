@@ -1,3 +1,11 @@
+#
+# LOCAL DEVELOPMENT ONLY
+#
+# This stack intentionally includes MySQL, MinIO, bind mounts, and dev servers.
+# Do not deploy this file to production. Production must use either:
+#   - deploy/lightsail-backend.sh for AWS Lightsail Container Service, or
+#   - docker-compose.prod.yml for a manually managed server.
+#
 services:
   # ---------------------------------------------------------------------------
   # MySQL 8.x
@@ -142,6 +150,12 @@ services:
       CHOKIDAR_USEPOLLING: "true"
     depends_on:
       - backend
+
+  # NOTE: frontend-next/ (Next.js 15) is a future rewrite that is NOT in active
+  # development and is NOT production. It is deliberately absent from this file
+  # and from docker-compose.prod.yml. The Vite `frontend` service above is the
+  # production app. Run the Next app directly with `npm run dev` in
+  # frontend-next/ if you need it; do not add it back here until it ships.
 
 volumes:
   mysql_data:

@@ -1,0 +1,81 @@
+#
+# PRODUCTION — this is the file that actually runs the live site.
+#
+# Captured VERBATIM on 2026-09-11 from the production host:
+#   ubuntu@44.242.113.98:~/therollecito_prjct/docker-compose.prod.yml
+#   (Lightsail instance `therollecito-prod`, us-west-2)
+#
+# It had been hand-edited on the server and was NEVER committed, which is why
+# the repo's copy did not match reality. Behaviour below is unchanged from the
+# host copy; only these comments were added. Commit it, then make future edits
+# HERE and ship them — never edit it on the server again.
+#
+# Live context, verified from the running containers:
+#   - Serves https://api.therollecito.com via the host's TLS reverse proxy,
+#     which is why port 3001 is bound to 127.0.0.1 only.
+#   - Frontend origin is https://app.therollecito.com (see CORS_ORIGIN below).
+#   - The `mysql_data` volume resolves to `therollecito_prjct_mysql_data`, which
+#     holds LIVE CUSTOMER DATA. Never run `docker compose down -v` on this host.
+#   - Correctly uses real AWS S3. There is no MinIO and no S3_ENDPOINT here.
+#
+# Routine deploy (backend only — `--no-deps` leaves the database untouched):
+#   docker compose -f docker-compose.prod.yml up -d --no-deps --build backend
+#
+# KNOWN ISSUES — see deploy/MANUAL_DEPLOYMENT.md. Not fixed here because these
+# change running behaviour and need a maintenance window:
+#   1. The database root password is `admin123` on a production DB.
+#   2. The backend reads ./backend/.env (the dev filename), not .env.production.
+#   3. seed.sql + the dev init.sh are mounted into the DB's initdb.d. They are
+#      inert on the existing volume, but would load DEV SEED DATA into any
+#      rebuilt-from-empty database.
+#
+services:
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      TZ: ${TZ:-America/Mexico_City}
+      MYSQL_ROOT_PASSWORD: admin123
+      MYSQL_DATABASE: restaurant_ordering
+    volumes:
+      # LIVE DATA. Resolves to therollecito_prjct_mysql_data on the host.
+      - mysql_data:/var/lib/mysql
+      - ./backend/database/schema.sql:/sql/01-schema.sql:ro
+      - ./backend/database/stored_procedures.sql:/sql/02-stored_procedures.sql:ro
+      - ./backend/database/seed.sql:/sql/03-seed.sql:ro
+      - ./backend/database/init.sh:/docker-entrypoint-initdb.d/00-init.sh:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    ports:
+      # Localhost only — the host's reverse proxy terminates TLS in front of it.
+      - "127.0.0.1:3001:3001"
+    volumes:
+      # NOTE: this is backend/.env, not .env.production. On the production host
+      # that file holds LIVE values (NODE_ENV=production, live Stripe keys, real
+      # AWS S3 credentials, S3_BUCKET, and no S3_ENDPOINT).
+      - ./backend/.env:/app/.env:ro
+      - ./firebase-service-account.json:/app/firebase-service-account.json:ro
+      - ./backend/database:/app/database:ro
+    environment:
+      TZ: ${TZ:-America/Mexico_City}
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: admin123
+      DB_NAME: restaurant_ordering
+      DB_CONNECTION_LIMIT: 10
+      CORS_ORIGIN: https://app.therollecito.com
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  mysql_data:

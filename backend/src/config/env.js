@@ -52,4 +52,22 @@ const env = {
   },
 };
 
+if (env.nodeEnv === 'production') {
+  if (!env.s3.bucket) {
+    throw new Error('Invalid production S3 config: S3_BUCKET is required.');
+  }
+
+  if (env.s3.endpoint) {
+    throw new Error('Invalid production S3 config: S3_ENDPOINT must be unset. Production must use AWS S3.');
+  }
+
+  if (env.s3.publicUrlBase && /(^|\/\/)(localhost|127\.0\.0\.1|minio)(:|\/|$)/i.test(env.s3.publicUrlBase)) {
+    throw new Error('Invalid production S3 config: S3_PUBLIC_URL_BASE points to a local/MinIO host.');
+  }
+
+  if (env.s3.bucket === 'the-rollecito-dev' || env.s3.bucket === 'menu-images') {
+    throw new Error('Invalid production S3 config: S3_BUCKET is a known local development bucket.');
+  }
+}
+
 module.exports = env;

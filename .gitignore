@@ -9,6 +9,12 @@ firebase-service-account.json
 *-firebase-adminsdk-*.json
 /frontend/node_modules
 /frontend/dist
+/frontend/.env
+/frontend/.env.*
+!/frontend/.env.example
+/frontend-next/.env
+/frontend-next/.env.*
+!/frontend-next/.env.example
 /.env
 /.env.local
 /.env.development
