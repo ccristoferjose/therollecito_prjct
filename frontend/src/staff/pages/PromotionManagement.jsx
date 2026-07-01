@@ -14,7 +14,7 @@ import EmptyState from '@shared/components/EmptyState';
 
 const emptyForm = {
   code: '', description: '', discountType: 'percentage', discountValue: '',
-  minOrder: '', maxUses: '', startsAt: '', expiresAt: '',
+  minOrder: '', perUserLimit: '', maxUses: '', startsAt: '', expiresAt: '',
 };
 
 export default function PromotionManagement() {
@@ -42,6 +42,7 @@ export default function PromotionManagement() {
       discountType: promo.discount_type,
       discountValue: String(promo.discount_value),
       minOrder: promo.min_order ? String(promo.min_order) : '',
+      perUserLimit: promo.per_user_limit ? String(promo.per_user_limit) : '',
       maxUses: promo.max_uses ? String(promo.max_uses) : '',
       startsAt: promo.starts_at ? new Date(promo.starts_at).toISOString().slice(0, 16) : '',
       expiresAt: promo.expires_at ? new Date(promo.expires_at).toISOString().slice(0, 16) : '',
@@ -59,6 +60,7 @@ export default function PromotionManagement() {
         discountType: form.discountType,
         discountValue: parseFloat(form.discountValue),
         minOrder: form.minOrder ? parseFloat(form.minOrder) : null,
+        perUserLimit: form.perUserLimit ? parseInt(form.perUserLimit) : null,
         maxUses: form.maxUses ? parseInt(form.maxUses) : null,
         startsAt: form.startsAt,
         expiresAt: form.expiresAt || null,
@@ -150,8 +152,16 @@ export default function PromotionManagement() {
                   </div>
                 )}
                 <div className="flex justify-between">
-                  <span className="text-text-secondary">Uses</span>
-                  <span className="text-text">{promo.current_uses}{promo.max_uses ? `/${promo.max_uses}` : ''}</span>
+                  <span className="text-text-secondary">Per customer</span>
+                  <span className="text-text">
+                    {promo.per_user_limit
+                      ? `${promo.per_user_limit} ${promo.per_user_limit === 1 ? 'time' : 'times'}`
+                      : 'Unlimited'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-text-secondary">Total redeemed</span>
+                  <span className="text-text">{promo.current_uses}{promo.max_uses ? ` / ${promo.max_uses}` : ''}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-text-secondary">Period</span>
@@ -219,8 +229,15 @@ export default function PromotionManagement() {
             <Input label="End Date" name="expiresAt" type="datetime-local" value={form.expiresAt} onChange={handleChange} />
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <Input label="Max Uses" name="maxUses" type="number" placeholder="Unlimited" value={form.maxUses} onChange={handleChange} />
+            <div>
+              <Input label="Uses per customer" name="perUserLimit" type="number" min="1" placeholder="Unlimited" value={form.perUserLimit} onChange={handleChange} />
+              <p className="text-xs text-text-secondary mt-1">e.g. 1 = each customer can redeem once. Blank = unlimited.</p>
+            </div>
             <Input label="Min Order Amount" name="minOrder" type="number" step="0.01" placeholder="0.00" value={form.minOrder} onChange={handleChange} />
+          </div>
+          <div>
+            <Input label="Total redemptions cap (optional)" name="maxUses" type="number" min="1" placeholder="Unlimited — across all customers" value={form.maxUses} onChange={handleChange} />
+            <p className="text-xs text-text-secondary mt-1">Overall budget across everyone. Leave blank for no cap; use the per-customer limit above for one-per-client codes.</p>
           </div>
           <Button type="submit" variant="primary" className="w-full" disabled={saving}>
             {saving ? 'Saving...' : editing ? 'Update Promotion' : 'Create Promotion'}

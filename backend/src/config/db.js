@@ -26,6 +26,36 @@ const pool = mysql.createPool({
   },
 });
 
+// Pin the MySQL *session* timezone on every new connection so NOW(), CURTIME()
+// and CURDATE() inside stored procedures (pickup-time validation, the daily
+// per-location order counter) agree with the Node process. This matters for
+// the managed-DB deploy path: AWS Lightsail DB / RDS run in UTC, and setting
+// `TZ` on the backend container does NOT change the DB server's clock — only
+// this SET does. Named zones need the tz tables loaded (present on RDS); if
+// they're absent (a bare mysql image), the SET fails and the connection falls
+// back to the server's SYSTEM tz — which our docker-compose sets via `TZ`, so
+// it stays correct there too.
+const SESSION_TZ = process.env.TZ || 'America/Los_Angeles';
+let sessionTzWarned = false;
+pool.on('connection', (connection) => {
+  // The pool 'connection' event hands back a core (callback-style) connection,
+  // so use the callback form. Capturing the error here is essential: an
+  // unhandled error on a fresh pooled connection (e.g. named tz tables not
+  // loaded on a bare mysql image) would otherwise destroy it. On failure we
+  // fall back to the server's SYSTEM timezone — which our containers set via
+  // `TZ`, so it stays correct.
+  connection.query('SET time_zone = ?', [SESSION_TZ], (err) => {
+    if (err && !sessionTzWarned) {
+      sessionTzWarned = true; // warn once, not per pooled connection
+      console.warn(
+        `[DB] Could not set session time_zone to '${SESSION_TZ}' ` +
+          `(${err.code}); falling back to the server's SYSTEM timezone. ` +
+          `Load MySQL tz tables to pin a named zone with DST support.`
+      );
+    }
+  });
+});
+
 /**
  * Call a stored procedure by name with positional parameters.
  * Returns the first result set (rows) — the standard shape for our SPs.

@@ -139,6 +139,7 @@ jq -n \
   --arg fee_pct    "$(getenv STRIPE_FEE_PERCENT)" \
   --arg fee_fix    "$(getenv STRIPE_FEE_FIXED)" \
   --arg cors       "$(getenv CORS_ORIGIN)" \
+  --arg tz         "$(getenv TZ)" \
   --arg s3_bucket  "$(getenv S3_BUCKET)" \
   --arg s3_url     "$(getenv S3_PUBLIC_URL_BASE)" \
   --arg aws_region "${APP_AWS_REGION_VAL}" \
@@ -156,8 +157,9 @@ jq -n \
           DB_USER: (if $db_user == "" then "root" else $db_user end),
           DB_NAME: (if $db_name == "" then "restaurant_ordering" else $db_name end),
           DB_CONNECTION_LIMIT: "10",
-          JWT_EXPIRES_IN: (if $jwt_exp == "" then "8h" else $jwt_exp end),
-          CORS_ORIGIN: (if $cors == "" then "*" else $cors end)
+          JWT_EXPIRES_IN: (if $jwt_exp == "" then "12h" else $jwt_exp end),
+          CORS_ORIGIN: (if $cors == "" then "*" else $cors end),
+          TZ: (if $tz == "" then "America/Los_Angeles" else $tz end)
         }
         + (if $db_host    != "" then {DB_HOST: $db_host} else {} end)
         + (if $db_pass    != "" then {DB_PASSWORD: $db_pass} else {} end)

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, Mail } from 'lucide-react';
+import { Lock, Mail, Clock } from 'lucide-react';
 import { useStaffAuth } from '@shared/context/StaffAuthContext';
 import Button from '@shared/components/Button';
 import Input from '@shared/components/Input';
@@ -13,6 +13,13 @@ export default function StaffLoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  // Set by StaffAuthContext when a 401 forced us here. Read once, then clear so
+  // it doesn't reappear on a later manual visit to the login page.
+  const [sessionExpired] = useState(() => {
+    const expired = sessionStorage.getItem('staff_session_expired') === '1';
+    if (expired) sessionStorage.removeItem('staff_session_expired');
+    return expired;
+  });
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -45,6 +52,13 @@ export default function StaffLoginPage() {
           <h1 className="mt-3 text-xl font-bold text-text">Staff Portal</h1>
           <p className="text-sm text-text-secondary">The Rollecito</p>
         </div>
+
+        {sessionExpired && (
+          <div className="mb-4 flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+            <Clock size={16} className="shrink-0" />
+            Your session expired. Please sign in again to keep receiving orders.
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <Input
