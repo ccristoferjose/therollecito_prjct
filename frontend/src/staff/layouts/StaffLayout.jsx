@@ -4,19 +4,23 @@ import {
   UtensilsCrossed,
   MapPin,
   Users,
+  Contact,
   Tag,
   LogOut,
   ChefHat,
   ClipboardList,
+  ShoppingBag,
 } from 'lucide-react';
 import { useStaffAuth } from '@shared/context/StaffAuthContext';
 import { useFetch } from '@shared/hooks/useFetch';
 
 const adminNav = [
   { to: '/staff/admin', icon: LayoutDashboard, label: 'Dashboard', end: true },
+  { to: '/staff/admin/history', icon: ShoppingBag, label: 'Orders' },
   { to: '/staff/admin/menu', icon: UtensilsCrossed, label: 'Menu' },
   { to: '/staff/admin/locations', icon: MapPin, label: 'Locations' },
   { to: '/staff/admin/users', icon: Users, label: 'Users' },
+  { to: '/staff/admin/clients', icon: Contact, label: 'Clients' },
   { to: '/staff/admin/promotions', icon: Tag, label: 'Promotions' },
 ];
 

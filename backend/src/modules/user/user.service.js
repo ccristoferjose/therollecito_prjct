@@ -50,4 +50,25 @@ async function deleteStaff(userId) {
   await db.call('sp_staff_delete', [userId]);
 }
 
-module.exports = { getByFirebaseUid, listStaff, createStaff, updateStaff, updateRole, changePassword, toggleActive, deleteStaff };
+// --- Clients directory (admin) -------------------------------------------
+async function listClients(search) {
+  const result = await db.call('sp_client_list', [search || null]);
+  return Array.isArray(result[0]) ? result[0] : result;
+}
+
+async function getClient(userId) {
+  const result = await db.call('sp_client_get', [userId]);
+  const rows = Array.isArray(result[0]) ? result[0] : result;
+  return rows[0] || null;
+}
+
+async function getClientOrders(userId) {
+  const result = await db.call('sp_order_list_by_user', [userId]);
+  return Array.isArray(result[0]) ? result[0] : result;
+}
+
+module.exports = {
+  getByFirebaseUid, listStaff, createStaff, updateStaff, updateRole,
+  changePassword, toggleActive, deleteStaff,
+  listClients, getClient, getClientOrders,
+};

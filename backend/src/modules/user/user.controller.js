@@ -36,4 +36,21 @@ const deleteStaff = asyncHandler(async (req, res) => {
   res.status(204).end();
 });
 
-module.exports = { listStaff, createStaff, updateStaff, updateRole, changePassword, toggleActive, deleteStaff };
+// --- Clients directory (admin) -------------------------------------------
+const listClients = asyncHandler(async (req, res) => {
+  const clients = await userService.listClients(req.query.search);
+  res.json(clients);
+});
+
+const getClientOrders = asyncHandler(async (req, res) => {
+  const client = await userService.getClient(req.params.id);
+  if (!client) return res.status(404).json({ error: 'Client not found.' });
+  const orders = await userService.getClientOrders(req.params.id);
+  res.json({ client, orders });
+});
+
+module.exports = {
+  listStaff, createStaff, updateStaff, updateRole, changePassword,
+  toggleActive, deleteStaff,
+  listClients, getClientOrders,
+};

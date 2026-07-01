@@ -10,7 +10,7 @@ services:
       # Restaurant timezone. Override with `TZ=America/...` in your shell or .env.
       # MUST match the backend service so absolute timestamps (NOW(), CURDATE(),
       # CURTIME()) align with the user's clock and the admin-set service hours.
-      TZ: ${TZ:-America/Mexico_City}
+      TZ: ${TZ:-America/Los_Angeles}
       MYSQL_ROOT_PASSWORD: admin123
       MYSQL_DATABASE: restaurant_ordering
     ports:
@@ -92,7 +92,7 @@ services:
       # Restaurant timezone — must match the db service. Drives Node's `new Date()`
       # output and is forwarded to mysql2 so DATETIME literals are parsed
       # consistently. Override via shell env: `TZ=America/Tijuana docker compose up`.
-      TZ: ${TZ:-America/Mexico_City}
+      TZ: ${TZ:-America/Los_Angeles}
       # DB connection (Docker-specific — overrides .env)
       DB_HOST: db
       DB_PORT: 3306

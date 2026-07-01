@@ -24,6 +24,7 @@ import KitchenDashboard from '@staff/pages/KitchenDashboard';
 import MenuManagement from '@staff/pages/MenuManagement';
 import LocationManagement from '@staff/pages/LocationManagement';
 import UserManagement from '@staff/pages/UserManagement';
+import ClientManagement from '@staff/pages/ClientManagement';
 import PromotionManagement from '@staff/pages/PromotionManagement';
 import KitchenHistory from '@staff/pages/KitchenHistory';
 
@@ -84,6 +85,8 @@ export default function App() {
           <Route path="menu" element={<MenuManagement />} />
           <Route path="locations" element={<LocationManagement />} />
           <Route path="users" element={<UserManagement />} />
+          <Route path="clients" element={<ClientManagement />} />
+          <Route path="history" element={<KitchenHistory />} />
           <Route path="promotions" element={<PromotionManagement />} />
         </Route>
 

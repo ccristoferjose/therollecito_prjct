@@ -7,7 +7,7 @@ import { useLang } from '@shared/context/LangContext';
 import { useClientAuth } from '@shared/context/ClientAuthContext';
 import { useCart } from '@shared/context/CartContext';
 import { useFetch } from '@shared/hooks/useFetch';
-import { formatCurrency, formatOrderNumber } from '@shared/utils/format';
+import { formatCurrency, formatOrderNumber, restaurantParts } from '@shared/utils/format';
 import { api } from '@shared/utils/api';
 import Card from '@shared/components/Card';
 import Button from '@shared/components/Button';
@@ -62,7 +62,10 @@ function computeScheduleState(location, now = new Date()) {
     return { mode: 'no_schedule', slots: [] };
   }
 
-  const nowMins = now.getHours() * 60 + now.getMinutes();
+  // Evaluate "now" in the restaurant's timezone so open/close and slots track
+  // the store's clock, not the customer's device.
+  const rp = restaurantParts(now);
+  const nowMins = rp.hour * 60 + rp.minute;
   let mode;
   if (nowMins > close) mode = 'closed';
   else if (nowMins < open) mode = 'before_open';
@@ -87,17 +90,17 @@ function computeScheduleState(location, now = new Date()) {
 }
 
 /**
- * Build a local-time DATETIME string for the server. Avoids toISOString()
- * which converts to UTC — the backend interprets bare datetimes in its own
- * local timezone, so we send the user's clock-time as-is.
+ * Build a bare (timezone-less) DATETIME string for the server. The backend
+ * interprets bare datetimes in its own local timezone, which must be the
+ * restaurant's zone (America/Los_Angeles) — so we stamp the restaurant-local
+ * calendar date (not the customer's device date) with the chosen slot time.
+ * Deliberately avoids toISOString(), which would emit UTC.
  */
 function buildLocalDateTime(slotMinutes, now = new Date()) {
-  const d = new Date(now);
-  d.setHours(Math.floor(slotMinutes / 60), slotMinutes % 60, 0, 0);
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}T${minutesToHHMM(slotMinutes)}:00`;
+  const { year, month, day } = restaurantParts(now);
+  const mm = String(month).padStart(2, '0');
+  const dd = String(day).padStart(2, '0');
+  return `${year}-${mm}-${dd}T${minutesToHHMM(slotMinutes)}:00`;
 }
 
 // ---------------------------------------------------------------------------
@@ -249,6 +252,7 @@ export default function CheckoutPage() {
       const result = await api.post('/promotions/preview', {
         code,
         order_total: subtotal,
+        user_id: dbUser?.id || null,
       });
       setAppliedPromo({
         code: result.code,
@@ -280,6 +284,7 @@ export default function CheckoutPage() {
         const result = await api.post('/promotions/preview', {
           code: appliedPromo.code,
           order_total: subtotal,
+          user_id: dbUser?.id || null,
         });
         if (cancelled) return;
         setAppliedPromo((prev) => prev && {

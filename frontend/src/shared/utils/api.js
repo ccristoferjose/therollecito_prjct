@@ -4,6 +4,14 @@ const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
   : '/api';
 
+// Registered by StaffAuthProvider so the app can react globally to an expired
+// or invalid staff session. Only fired for requests that carried a token —
+// i.e. authenticated staff calls — so public/client requests never trip it.
+let onUnauthorized = null;
+export function setUnauthorizedHandler(fn) {
+  onUnauthorized = fn;
+}
+
 async function request(endpoint, options = {}) {
   const { body, token, raw, ...rest } = options;
 
@@ -18,6 +26,12 @@ async function request(endpoint, options = {}) {
   });
 
   if (!res.ok) {
+    // An authenticated request that 401s means the JWT expired or is invalid.
+    // Notify the session handler so the user is logged out and redirected,
+    // instead of silently staring at an empty dashboard.
+    if (res.status === 401 && token && onUnauthorized) {
+      onUnauthorized();
+    }
     const data = await res.json().catch(() => ({}));
     const err = new Error(data.error || `Request failed (${res.status})`);
     err.status = res.status;

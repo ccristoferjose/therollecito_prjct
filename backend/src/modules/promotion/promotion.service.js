@@ -6,16 +6,16 @@ async function list() {
   return rows;
 }
 
-async function create({ code, description, discountType, discountValue, minOrder, maxUses, startsAt, expiresAt }) {
+async function create({ code, description, discountType, discountValue, minOrder, maxUses, perUserLimit, startsAt, expiresAt }) {
   const result = await db.call('sp_promotion_create', [
     code, description || null, discountType, discountValue,
-    minOrder || null, maxUses || null, startsAt, expiresAt || null,
+    minOrder || null, maxUses || null, perUserLimit || null, startsAt, expiresAt || null,
   ]);
   const rows = Array.isArray(result[0]) ? result[0] : result;
   return rows[0];
 }
 
-async function update(id, { code, description, discountType, discountValue, minOrder, maxUses, startsAt, expiresAt, isActive }) {
+async function update(id, { code, description, discountType, discountValue, minOrder, maxUses, perUserLimit, startsAt, expiresAt, isActive }) {
   const result = await db.call('sp_promotion_update', [
     id,
     code || null,
@@ -24,6 +24,7 @@ async function update(id, { code, description, discountType, discountValue, minO
     discountValue || null,
     minOrder !== undefined ? minOrder : null,
     maxUses !== undefined ? maxUses : null,
+    perUserLimit !== undefined ? perUserLimit : null,
     startsAt || null,
     expiresAt !== undefined ? expiresAt : null,
     isActive !== undefined ? (isActive ? 1 : 0) : null,
@@ -42,8 +43,8 @@ async function apply(code, orderTotal) {
   return rows[0];
 }
 
-async function preview(code, orderTotal) {
-  const result = await db.call('sp_promotion_preview', [code, orderTotal]);
+async function preview(code, orderTotal, userId) {
+  const result = await db.call('sp_promotion_preview', [code, orderTotal, userId || null]);
   const rows = Array.isArray(result[0]) ? result[0] : result;
   return rows[0];
 }

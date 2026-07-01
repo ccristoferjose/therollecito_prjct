@@ -10,7 +10,7 @@ import { Link } from 'react-router-dom';
 import { useStaffAuth } from '@shared/context/StaffAuthContext';
 import { useFetch } from '@shared/hooks/useFetch';
 import { api } from '@shared/utils/api';
-import { formatCurrency, formatOrderNumber, timeAgo } from '@shared/utils/format';
+import { formatCurrency, formatOrderNumber, timeAgo, RESTAURANT_TZ } from '@shared/utils/format';
 import Card from '@shared/components/Card';
 import Badge from '@shared/components/Badge';
 import Spinner from '@shared/components/Spinner';
@@ -23,7 +23,7 @@ function formatShortDate(iso) {
   return new Date(iso).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
-    timeZone: 'America/Los_Angeles',
+    timeZone: RESTAURANT_TZ,
   });
 }
 
@@ -104,7 +104,7 @@ export default function AdminDashboard() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-xl font-bold text-text">Dashboard</h2>
         <p className="text-xs text-text-secondary">
-          All figures use <strong>America/Los_Angeles</strong> time · refreshes every 60s
+          All figures use <strong>Pacific time (America/Los_Angeles)</strong> · refreshes every 60s
         </p>
       </div>
 
