@@ -206,7 +206,20 @@ export default function ClientLayout() {
                 </li>
                 <li className="flex items-center gap-2">
                   <Phone size={14} className="text-accent" />
-                  <span>(305) 555-0101</span>
+                  <a href="tel:+13236129202" className="hover:text-accent transition-colors">
+                    (323) 612-9202
+                  </a>
+                </li>
+                <li className="flex items-start gap-2">
+                  <MapPin size={14} className="text-accent mt-0.5 shrink-0" />
+                  <a
+                    href="https://maps.google.com/?q=620+El+Segundo+Blvd,+Los+Angeles,+CA+90059"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="hover:text-accent transition-colors"
+                  >
+                    620 El Segundo Blvd, Los Angeles, CA 90059
+                  </a>
                 </li>
                 <li className="flex items-start gap-2">
                   <Clock size={14} className="text-accent mt-0.5 shrink-0" />
@@ -218,7 +231,7 @@ export default function ClientLayout() {
 
           <div className="mt-10 border-t border-[#FFF1DC]/15 pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-[#FFF1DC]/60">
             <p>&copy; {new Date().getFullYear()} The Rollecito. {t.footer.rights}</p>
-            <p>Baked with love in Miami.</p>
+            <p>Baked with love in Los Angeles.</p>
           </div>
         </div>
       </footer>

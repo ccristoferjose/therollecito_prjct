@@ -257,6 +257,61 @@ BEGIN
 END //
 
 
+-- -----------------------------------------------------------------------------
+-- sp_client_list — the Clients directory (admin). Lists every client-role user
+-- who has signed into the platform, with lightweight order aggregates so the
+-- admin can scan activity at a glance. p_search (optional) filters by name,
+-- email or phone. total_spent counts only money actually collected (paid and
+-- beyond); CREATED (abandoned) and CANCELED (refunded) orders are excluded.
+-- -----------------------------------------------------------------------------
+DROP PROCEDURE IF EXISTS sp_client_list //
+CREATE PROCEDURE sp_client_list(IN p_search VARCHAR(255))
+BEGIN
+  SELECT u.id, u.email, u.first_name, u.last_name, u.phone,
+         u.firebase_uid, u.is_active, u.created_at,
+         COUNT(DISTINCT o.id) AS order_count,
+         COALESCE(SUM(CASE WHEN os.name IN ('PAID','PREPARING','READY','COMPLETED')
+                           THEN o.total_amount ELSE 0 END), 0) AS total_spent,
+         MAX(o.created_at) AS last_order_at
+    FROM `user` u
+    JOIN role r ON r.id = u.role_id
+    LEFT JOIN `order` o ON o.user_id = u.id
+    LEFT JOIN order_status os ON os.id = o.status_id
+   WHERE r.name = 'client'
+     AND (p_search IS NULL OR p_search = ''
+          OR u.email LIKE CONCAT('%', p_search, '%')
+          OR u.first_name LIKE CONCAT('%', p_search, '%')
+          OR u.last_name LIKE CONCAT('%', p_search, '%')
+          OR u.phone LIKE CONCAT('%', p_search, '%')
+          OR CONCAT(u.first_name, ' ', u.last_name) LIKE CONCAT('%', p_search, '%'))
+   GROUP BY u.id, u.email, u.first_name, u.last_name, u.phone,
+            u.firebase_uid, u.is_active, u.created_at
+   ORDER BY (MAX(o.created_at) IS NULL), MAX(o.created_at) DESC, u.created_at DESC;
+END //
+
+-- -----------------------------------------------------------------------------
+-- sp_client_get — one client's profile + the same aggregates as the list, for
+-- the directory detail panel. Returns no rows if the id isn't a client.
+-- -----------------------------------------------------------------------------
+DROP PROCEDURE IF EXISTS sp_client_get //
+CREATE PROCEDURE sp_client_get(IN p_user_id INT UNSIGNED)
+BEGIN
+  SELECT u.id, u.email, u.first_name, u.last_name, u.phone,
+         u.firebase_uid, u.is_active, u.created_at,
+         COUNT(DISTINCT o.id) AS order_count,
+         COALESCE(SUM(CASE WHEN os.name IN ('PAID','PREPARING','READY','COMPLETED')
+                           THEN o.total_amount ELSE 0 END), 0) AS total_spent,
+         MAX(o.created_at) AS last_order_at
+    FROM `user` u
+    JOIN role r ON r.id = u.role_id
+    LEFT JOIN `order` o ON o.user_id = u.id
+    LEFT JOIN order_status os ON os.id = o.status_id
+   WHERE u.id = p_user_id AND r.name = 'client'
+   GROUP BY u.id, u.email, u.first_name, u.last_name, u.phone,
+            u.firebase_uid, u.is_active, u.created_at;
+END //
+
+
 -- #############################################################################
 -- #  SECTION 2: ORDER LIFECYCLE
 -- #############################################################################
@@ -518,14 +573,17 @@ BEGIN
   DECLARE v_discount_value  DECIMAL(10, 2);
   DECLARE v_min_order       DECIMAL(10, 2);
   DECLARE v_max_uses        INT UNSIGNED;
+  DECLARE v_per_user_limit  INT UNSIGNED;
   DECLARE v_current_uses    INT UNSIGNED;
+  DECLARE v_user_uses       INT UNSIGNED DEFAULT 0;
+  DECLARE v_user_id         INT UNSIGNED;
   DECLARE v_is_active       TINYINT(1);
   DECLARE v_starts_at       DATETIME;
   DECLARE v_expires_at      DATETIME;
 
   DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; RESIGNAL; END;
 
-  SELECT os.name INTO v_status_name
+  SELECT os.name, o.user_id INTO v_status_name, v_user_id
     FROM `order` o JOIN order_status os ON os.id = o.status_id
    WHERE o.id = p_order_id LIMIT 1;
   IF v_status_name IS NULL THEN
@@ -547,10 +605,10 @@ BEGIN
   WHERE oi.order_id = p_order_id;
 
   IF p_promotion_code IS NOT NULL AND CHAR_LENGTH(TRIM(p_promotion_code)) > 0 THEN
-    SELECT id, discount_type, discount_value, min_order, max_uses, current_uses,
-           is_active, starts_at, expires_at
+    SELECT id, discount_type, discount_value, min_order, max_uses, per_user_limit,
+           current_uses, is_active, starts_at, expires_at
       INTO v_promotion_id, v_discount_type, v_discount_value, v_min_order, v_max_uses,
-           v_current_uses, v_is_active, v_starts_at, v_expires_at
+           v_per_user_limit, v_current_uses, v_is_active, v_starts_at, v_expires_at
       FROM promotion WHERE code = UPPER(TRIM(p_promotion_code)) LIMIT 1;
 
     IF v_promotion_id IS NULL THEN
@@ -567,6 +625,19 @@ BEGIN
     END IF;
     IF v_max_uses IS NOT NULL AND v_current_uses >= v_max_uses THEN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Promotion usage limit reached.';
+    END IF;
+    -- Per-customer limit (registered users only): block if this customer has
+    -- already redeemed it the allowed number of times on non-canceled orders.
+    IF v_user_id IS NOT NULL AND v_per_user_limit IS NOT NULL THEN
+      SELECT COUNT(*) INTO v_user_uses
+        FROM `order` o JOIN order_status os ON os.id = o.status_id
+       WHERE o.promotion_id = v_promotion_id AND o.user_id = v_user_id
+         AND o.id <> p_order_id
+         AND os.name NOT IN ('CREATED', 'CANCELED');
+      IF v_user_uses >= v_per_user_limit THEN
+        SIGNAL SQLSTATE '45000'
+          SET MESSAGE_TEXT = 'You have already used this promotion the maximum number of times.';
+      END IF;
     END IF;
     IF v_min_order IS NOT NULL AND v_subtotal < v_min_order THEN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Order total does not meet the minimum.';
@@ -881,19 +952,25 @@ CREATE PROCEDURE sp_order_list_by_location(
 BEGIN
   IF p_status_name IS NOT NULL THEN
     SELECT o.id, o.display_number, o.user_id, o.status_id, os.name AS status_name,
-           o.guest_name, o.guest_phone, o.total_amount, o.pickup_time, o.created_at,
-           o.is_priority, o.priority_set_at, o.priority_reason
+           o.guest_name, o.guest_phone, o.notes, o.total_amount, o.pickup_time, o.created_at,
+           o.is_priority, o.priority_set_at, o.priority_reason,
+           u.first_name AS user_first_name, u.last_name AS user_last_name,
+           u.email AS user_email, u.phone AS user_phone
       FROM `order` o
       JOIN order_status os ON os.id = o.status_id
+      LEFT JOIN `user` u ON u.id = o.user_id
      WHERE o.location_id = p_location_id AND os.name = p_status_name
      ORDER BY o.is_priority DESC,
               CASE WHEN o.is_priority = 1 THEN o.priority_set_at ELSE o.created_at END ASC;
   ELSE
     SELECT o.id, o.display_number, o.user_id, o.status_id, os.name AS status_name,
-           o.guest_name, o.guest_phone, o.total_amount, o.pickup_time, o.created_at,
-           o.is_priority, o.priority_set_at, o.priority_reason
+           o.guest_name, o.guest_phone, o.notes, o.total_amount, o.pickup_time, o.created_at,
+           o.is_priority, o.priority_set_at, o.priority_reason,
+           u.first_name AS user_first_name, u.last_name AS user_last_name,
+           u.email AS user_email, u.phone AS user_phone
       FROM `order` o
       JOIN order_status os ON os.id = o.status_id
+      LEFT JOIN `user` u ON u.id = o.user_id
      WHERE o.location_id = p_location_id AND os.name NOT IN ('COMPLETED', 'CANCELED')
      ORDER BY o.is_priority DESC, o.created_at ASC;
   END IF;
@@ -1577,6 +1654,7 @@ CREATE PROCEDURE sp_promotion_create(
   IN p_discount_value DECIMAL(10, 2),
   IN p_min_order      DECIMAL(10, 2),
   IN p_max_uses       INT UNSIGNED,
+  IN p_per_user_limit INT UNSIGNED,
   IN p_starts_at      DATETIME,
   IN p_expires_at     DATETIME
 )
@@ -1599,12 +1677,12 @@ BEGIN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'starts_at is required.';
   END IF;
 
-  INSERT INTO promotion (code, description, discount_type, discount_value, min_order, max_uses, starts_at, expires_at)
-  VALUES (UPPER(TRIM(p_code)), p_description, p_discount_type, p_discount_value, p_min_order, p_max_uses, p_starts_at, p_expires_at);
+  INSERT INTO promotion (code, description, discount_type, discount_value, min_order, max_uses, per_user_limit, starts_at, expires_at)
+  VALUES (UPPER(TRIM(p_code)), p_description, p_discount_type, p_discount_value, p_min_order, p_max_uses, p_per_user_limit, p_starts_at, p_expires_at);
   SET v_id = LAST_INSERT_ID();
 
   SELECT id, code, description, discount_type, discount_value, min_order, max_uses,
-         current_uses, starts_at, expires_at, is_active, created_at
+         per_user_limit, current_uses, starts_at, expires_at, is_active, created_at
     FROM promotion WHERE id = v_id;
 END //
 
@@ -1612,7 +1690,7 @@ DROP PROCEDURE IF EXISTS sp_promotion_list //
 CREATE PROCEDURE sp_promotion_list()
 BEGIN
   SELECT id, code, description, discount_type, discount_value, min_order, max_uses,
-         current_uses, starts_at, expires_at, is_active, created_at
+         per_user_limit, current_uses, starts_at, expires_at, is_active, created_at
     FROM promotion
    ORDER BY created_at DESC;
 END //
@@ -1626,6 +1704,7 @@ CREATE PROCEDURE sp_promotion_update(
   IN p_discount_value DECIMAL(10, 2),
   IN p_min_order      DECIMAL(10, 2),
   IN p_max_uses       INT UNSIGNED,
+  IN p_per_user_limit INT UNSIGNED,
   IN p_starts_at      DATETIME,
   IN p_expires_at     DATETIME,
   IN p_is_active      TINYINT(1)
@@ -1642,13 +1721,14 @@ BEGIN
          discount_value = COALESCE(p_discount_value, discount_value),
          min_order      = COALESCE(p_min_order, min_order),
          max_uses       = COALESCE(p_max_uses, max_uses),
+         per_user_limit = COALESCE(p_per_user_limit, per_user_limit),
          starts_at      = COALESCE(p_starts_at, starts_at),
          expires_at     = p_expires_at,
          is_active      = COALESCE(p_is_active, is_active)
    WHERE id = p_id;
 
   SELECT id, code, description, discount_type, discount_value, min_order, max_uses,
-         current_uses, starts_at, expires_at, is_active, created_at
+         per_user_limit, current_uses, starts_at, expires_at, is_active, created_at
     FROM promotion WHERE id = p_id;
 END //
 
@@ -1751,7 +1831,10 @@ END //
 DROP PROCEDURE IF EXISTS sp_promotion_preview //
 CREATE PROCEDURE sp_promotion_preview(
   IN p_code        VARCHAR(50),
-  IN p_order_total DECIMAL(10, 2)
+  IN p_order_total DECIMAL(10, 2),
+  -- Registered customer id (NULL for guests). Per-customer limits only apply
+  -- when known — guests fall back to the optional global cap.
+  IN p_user_id     INT UNSIGNED
 )
 BEGIN
   DECLARE v_id             INT UNSIGNED;
@@ -1759,16 +1842,18 @@ BEGIN
   DECLARE v_discount_value DECIMAL(10, 2);
   DECLARE v_min_order      DECIMAL(10, 2);
   DECLARE v_max_uses       INT UNSIGNED;
+  DECLARE v_per_user_limit INT UNSIGNED;
   DECLARE v_current_uses   INT UNSIGNED;
+  DECLARE v_user_uses      INT UNSIGNED DEFAULT 0;
   DECLARE v_is_active      TINYINT(1);
   DECLARE v_starts_at      DATETIME;
   DECLARE v_expires_at     DATETIME;
   DECLARE v_discount_amount DECIMAL(10, 2);
 
-  SELECT id, discount_type, discount_value, min_order, max_uses, current_uses,
-         is_active, starts_at, expires_at
+  SELECT id, discount_type, discount_value, min_order, max_uses, per_user_limit,
+         current_uses, is_active, starts_at, expires_at
     INTO v_id, v_discount_type, v_discount_value, v_min_order, v_max_uses,
-         v_current_uses, v_is_active, v_starts_at, v_expires_at
+         v_per_user_limit, v_current_uses, v_is_active, v_starts_at, v_expires_at
     FROM promotion WHERE code = UPPER(TRIM(p_code)) LIMIT 1;
 
   IF v_id IS NULL THEN
@@ -1785,6 +1870,18 @@ BEGIN
   END IF;
   IF v_max_uses IS NOT NULL AND v_current_uses >= v_max_uses THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Promotion usage limit reached.';
+  END IF;
+  -- Per-customer limit: count this customer's own prior redemptions (paid and
+  -- not canceled). Only enforced for registered users with a limit set.
+  IF p_user_id IS NOT NULL AND v_per_user_limit IS NOT NULL THEN
+    SELECT COUNT(*) INTO v_user_uses
+      FROM `order` o JOIN order_status os ON os.id = o.status_id
+     WHERE o.promotion_id = v_id AND o.user_id = p_user_id
+       AND os.name NOT IN ('CREATED', 'CANCELED');
+    IF v_user_uses >= v_per_user_limit THEN
+      SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'You have already used this promotion the maximum number of times.';
+    END IF;
   END IF;
   IF v_min_order IS NOT NULL AND p_order_total < v_min_order THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Order total does not meet the minimum.';
@@ -1807,6 +1904,12 @@ END //
 
 -- #############################################################################
 -- #  SECTION 9: ADMIN DASHBOARD
+-- #
+-- #  Timezone: the DB session runs in the restaurant's local zone (set via the
+-- #  `TZ` env on the container and `SET time_zone` on each connection), so
+-- #  NOW()/CURDATE() and the stored `created_at` are already restaurant-local.
+-- #  Use DATE(created_at)/CURDATE() DIRECTLY — do NOT wrap in CONVERT_TZ from
+-- #  'UTC', which would double-shift the day boundary.
 -- #############################################################################
 
 DROP PROCEDURE IF EXISTS sp_dashboard_kpis //
@@ -1814,21 +1917,21 @@ CREATE PROCEDURE sp_dashboard_kpis()
 BEGIN
   DECLARE v_today DATE;
   DECLARE v_yesterday DATE;
-  SET v_today = DATE(CONVERT_TZ(NOW(), 'UTC', 'America/Los_Angeles'));
+  SET v_today = CURDATE();
   SET v_yesterday = DATE_SUB(v_today, INTERVAL 1 DAY);
 
   SELECT
     (SELECT COALESCE(SUM(total_amount), 0) FROM `order` o JOIN order_status os ON os.id = o.status_id
-     WHERE DATE(CONVERT_TZ(o.created_at, 'UTC', 'America/Los_Angeles')) = v_today
+     WHERE DATE(o.created_at) = v_today
        AND os.name IN ('PAID','PREPARING','READY','COMPLETED')) AS today_revenue,
     (SELECT COUNT(*) FROM `order` o JOIN order_status os ON os.id = o.status_id
-     WHERE DATE(CONVERT_TZ(o.created_at, 'UTC', 'America/Los_Angeles')) = v_today
+     WHERE DATE(o.created_at) = v_today
        AND os.name IN ('PAID','PREPARING','READY','COMPLETED')) AS today_orders,
     (SELECT COALESCE(SUM(total_amount), 0) FROM `order` o JOIN order_status os ON os.id = o.status_id
-     WHERE DATE(CONVERT_TZ(o.created_at, 'UTC', 'America/Los_Angeles')) = v_yesterday
+     WHERE DATE(o.created_at) = v_yesterday
        AND os.name IN ('PAID','PREPARING','READY','COMPLETED')) AS yesterday_revenue,
     (SELECT COUNT(*) FROM `order` o JOIN order_status os ON os.id = o.status_id
-     WHERE DATE(CONVERT_TZ(o.created_at, 'UTC', 'America/Los_Angeles')) = v_yesterday
+     WHERE DATE(o.created_at) = v_yesterday
        AND os.name IN ('PAID','PREPARING','READY','COMPLETED')) AS yesterday_orders,
     (SELECT COUNT(*) FROM `order` o JOIN order_status os ON os.id = o.status_id
      WHERE os.name IN ('PAID','PREPARING','READY')) AS active_orders;
@@ -1838,14 +1941,14 @@ DROP PROCEDURE IF EXISTS sp_dashboard_lifetime //
 CREATE PROCEDURE sp_dashboard_lifetime()
 BEGIN
   DECLARE v_today DATE;
-  SET v_today = DATE(CONVERT_TZ(NOW(), 'UTC', 'America/Los_Angeles'));
+  SET v_today = CURDATE();
   SELECT
     (SELECT COALESCE(SUM(total_amount), 0) FROM `order` o JOIN order_status os ON os.id = o.status_id
      WHERE os.name IN ('PAID','PREPARING','READY','COMPLETED')) AS lifetime_revenue,
     (SELECT COUNT(*) FROM `order` o JOIN order_status os ON os.id = o.status_id
      WHERE os.name IN ('PAID','PREPARING','READY','COMPLETED')) AS lifetime_orders,
     (SELECT COALESCE(SUM(total_amount), 0) / 30 FROM `order` o JOIN order_status os ON os.id = o.status_id
-     WHERE DATE(CONVERT_TZ(o.created_at, 'UTC', 'America/Los_Angeles'))
+     WHERE DATE(o.created_at)
            BETWEEN DATE_SUB(v_today, INTERVAL 29 DAY) AND v_today
        AND os.name IN ('PAID','PREPARING','READY','COMPLETED')) AS avg_daily_30d;
 END //
@@ -1854,7 +1957,7 @@ DROP PROCEDURE IF EXISTS sp_dashboard_daily_revenue //
 CREATE PROCEDURE sp_dashboard_daily_revenue(IN p_location_id INT UNSIGNED)
 BEGIN
   DECLARE v_today DATE;
-  SET v_today = DATE(CONVERT_TZ(NOW(), 'UTC', 'America/Los_Angeles'));
+  SET v_today = CURDATE();
 
   WITH RECURSIVE day_series AS (
     SELECT DATE_SUB(v_today, INTERVAL 29 DAY) AS d
@@ -1865,7 +1968,7 @@ BEGIN
          COALESCE(SUM(o.total_amount), 0) AS revenue,
          COUNT(o.id) AS order_count
   FROM day_series ds
-  LEFT JOIN `order` o ON DATE(CONVERT_TZ(o.created_at, 'UTC', 'America/Los_Angeles')) = ds.d
+  LEFT JOIN `order` o ON DATE(o.created_at) = ds.d
     AND (p_location_id IS NULL OR o.location_id = p_location_id)
     AND o.status_id IN (SELECT id FROM order_status WHERE name IN ('PAID','PREPARING','READY','COMPLETED'))
   GROUP BY ds.d
@@ -1876,20 +1979,20 @@ DROP PROCEDURE IF EXISTS sp_dashboard_location_stats //
 CREATE PROCEDURE sp_dashboard_location_stats()
 BEGIN
   DECLARE v_today DATE;
-  SET v_today = DATE(CONVERT_TZ(NOW(), 'UTC', 'America/Los_Angeles'));
+  SET v_today = CURDATE();
 
   SELECT l.id, l.name, l.city, l.is_active,
-    COALESCE(SUM(CASE WHEN DATE(CONVERT_TZ(o.created_at, 'UTC', 'America/Los_Angeles')) = v_today
+    COALESCE(SUM(CASE WHEN DATE(o.created_at) = v_today
                       THEN o.total_amount ELSE 0 END), 0) AS today_revenue,
-    SUM(CASE WHEN DATE(CONVERT_TZ(o.created_at, 'UTC', 'America/Los_Angeles')) = v_today
+    SUM(CASE WHEN DATE(o.created_at) = v_today
              THEN 1 ELSE 0 END) AS today_orders,
-    COALESCE(SUM(CASE WHEN DATE(CONVERT_TZ(o.created_at, 'UTC', 'America/Los_Angeles')) >= DATE_SUB(v_today, INTERVAL 6 DAY)
+    COALESCE(SUM(CASE WHEN DATE(o.created_at) >= DATE_SUB(v_today, INTERVAL 6 DAY)
                       THEN o.total_amount ELSE 0 END), 0) AS week_revenue,
-    SUM(CASE WHEN DATE(CONVERT_TZ(o.created_at, 'UTC', 'America/Los_Angeles')) >= DATE_SUB(v_today, INTERVAL 6 DAY)
+    SUM(CASE WHEN DATE(o.created_at) >= DATE_SUB(v_today, INTERVAL 6 DAY)
              THEN 1 ELSE 0 END) AS week_orders,
-    COALESCE(SUM(CASE WHEN DATE(CONVERT_TZ(o.created_at, 'UTC', 'America/Los_Angeles')) >= DATE_SUB(v_today, INTERVAL 29 DAY)
+    COALESCE(SUM(CASE WHEN DATE(o.created_at) >= DATE_SUB(v_today, INTERVAL 29 DAY)
                       THEN o.total_amount ELSE 0 END), 0) AS month_revenue,
-    SUM(CASE WHEN DATE(CONVERT_TZ(o.created_at, 'UTC', 'America/Los_Angeles')) >= DATE_SUB(v_today, INTERVAL 29 DAY)
+    SUM(CASE WHEN DATE(o.created_at) >= DATE_SUB(v_today, INTERVAL 29 DAY)
              THEN 1 ELSE 0 END) AS month_orders
   FROM location l
   LEFT JOIN `order` o ON o.location_id = l.id

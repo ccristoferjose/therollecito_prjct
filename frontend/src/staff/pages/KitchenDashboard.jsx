@@ -2,14 +2,14 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Clock, ChefHat, Bell, CheckCircle, Volume2, VolumeX, AlertTriangle,
   User, Timer, MapPin, CreditCard, RotateCcw, XCircle, Flame,
-  MoreVertical, ArrowRight, Package,
+  MoreVertical, ArrowRight, Package, MessageSquare, Phone, Mail,
 } from 'lucide-react';
 import Modal from '@shared/components/Modal';
 import { useStaffAuth } from '@shared/context/StaffAuthContext';
 import { useFetch } from '@shared/hooks/useFetch';
 import { useSocket } from '@shared/hooks/useSocket';
 import { api } from '@shared/utils/api';
-import { formatCurrency, formatOrderNumber } from '@shared/utils/format';
+import { formatCurrency, formatOrderNumber, RESTAURANT_TZ } from '@shared/utils/format';
 import Button from '@shared/components/Button';
 import Spinner from '@shared/components/Spinner';
 
@@ -135,6 +135,16 @@ function KanbanCard({ order, column, expanded, onSelect, onAdvance, onPrioritize
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
 
+  // Customer identity: guests carry guest_name/phone; registered customers
+  // come through the joined user_* fields.
+  const registeredName = [order.user_first_name, order.user_last_name].filter(Boolean).join(' ');
+  const customerName = order.guest_name || registeredName || 'Registered customer';
+  const customerPhone = order.guest_phone || order.user_phone || null;
+  const customerEmail = order.user_email || null;
+  // Order-level comment (checkout "special instructions") vs per-item notes.
+  const orderComment = order.notes && order.notes.trim() ? order.notes.trim() : null;
+  const toppingsCount = (order.items || []).reduce((n, it) => n + (it.options?.length || 0), 0);
+
   useEffect(() => {
     if (!menuOpen) return;
     function handleOutside(e) {
@@ -233,22 +243,58 @@ function KanbanCard({ order, column, expanded, onSelect, onAdvance, onPrioritize
             </div>
           )}
 
-          {/* Customer row */}
-          <div className="px-4 py-2 border-t border-border/60 flex items-center gap-2 text-sm">
-            <User size={16} className="text-text-secondary shrink-0" />
-            <span className="font-semibold text-primary-dark truncate">
-              {order.guest_name || 'Registered User'}
-            </span>
-            {order.pickup_time && (
-              <span className="ml-auto text-xs text-text-secondary">
-                Pickup{' '}
-                {new Date(order.pickup_time).toLocaleTimeString([], {
-                  hour: 'numeric',
-                  minute: '2-digit',
-                })}
-              </span>
+          {/* Customer block — name, phone, email, pickup */}
+          <div className="px-4 py-2.5 border-t border-border/60 text-sm">
+            <div className="flex items-center gap-2">
+              <User size={16} className="text-text-secondary shrink-0" />
+              <span className="font-semibold text-primary-dark truncate">{customerName}</span>
+              {!order.guest_name && registeredName && (
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-primary bg-primary-light/60 rounded px-1.5 py-0.5">
+                  Account
+                </span>
+              )}
+              {order.pickup_time && (
+                <span className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-primary-dark bg-[#FFF1DC] rounded-full px-2 py-0.5 shrink-0">
+                  <Clock size={12} />
+                  {new Date(order.pickup_time).toLocaleTimeString([], {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    timeZone: RESTAURANT_TZ,
+                  })}
+                </span>
+              )}
+            </div>
+            {(customerPhone || customerEmail) && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 pl-6 text-xs text-text-secondary">
+                {customerPhone && (
+                  <a href={`tel:${customerPhone}`} className="inline-flex items-center gap-1 hover:text-primary">
+                    <Phone size={12} /> {customerPhone}
+                  </a>
+                )}
+                {customerEmail && (
+                  <span className="inline-flex items-center gap-1 truncate">
+                    <Mail size={12} /> {customerEmail}
+                  </span>
+                )}
+              </div>
             )}
           </div>
+
+          {/* Order comment — the customer's special instructions. High-contrast
+              callout so the kitchen never misses it. */}
+          {orderComment && (
+            <div className="mx-4 mb-1 mt-1 rounded-xl border-2 border-accent/40 bg-accent/10 px-3 py-2.5">
+              <div className="flex items-center gap-1.5 mb-1">
+                <MessageSquare size={14} className="text-accent-hover" />
+                <p className="text-[11px] font-bold uppercase tracking-wide text-accent-hover">
+                  Customer note
+                </p>
+              </div>
+              <p className="text-sm font-semibold text-primary-dark whitespace-pre-wrap break-words">
+                {orderComment}
+              </p>
+            </div>
+          )}
 
           {/* Items list */}
           <div className="px-4 py-3 border-t border-border/60 space-y-2.5 bg-[#FFF1DC]/40">
@@ -270,17 +316,22 @@ function KanbanCard({ order, column, expanded, onSelect, onAdvance, onPrioritize
                         {item.options.map((opt) => (
                           <span
                             key={opt.id}
-                            className="inline-flex items-center text-sm font-bold text-amber-900 bg-white border border-amber-300 rounded-md px-2 py-0.5"
+                            className="inline-flex items-center gap-1 text-sm font-bold text-amber-900 bg-white border border-amber-300 rounded-md px-2 py-0.5"
                           >
                             {opt.option_value_name}
+                            {opt.price_modifier > 0 && (
+                              <span className="text-[11px] font-semibold text-amber-700">
+                                +{formatCurrency(opt.price_modifier)}
+                              </span>
+                            )}
                           </span>
                         ))}
                       </div>
                     </div>
                   )}
                   {item.notes && (
-                    <p className="text-sm font-semibold text-accent-hover mt-1">
-                      ⚠ {item.notes}
+                    <p className="mt-1 flex items-start gap-1 text-sm font-semibold text-accent-hover">
+                      <AlertTriangle size={13} className="mt-0.5 shrink-0" /> {item.notes}
                     </p>
                   )}
                 </div>
@@ -302,14 +353,30 @@ function KanbanCard({ order, column, expanded, onSelect, onAdvance, onPrioritize
       {/* === COMPACT-ONLY ROW === customer + total + a hint that it's tappable */}
       {!expanded && (
         <div className="px-4 pb-2.5 flex items-center justify-between gap-2 text-sm">
-          <span className="font-semibold text-primary-dark truncate flex items-center gap-1.5">
+          <span className="font-semibold text-primary-dark truncate flex items-center gap-1.5 min-w-0">
             <User size={14} className="text-text-secondary shrink-0" />
-            {order.guest_name || 'Registered User'}
-            {order.is_priority && <Flame size={14} className="text-red-600" />}
+            <span className="truncate">{customerName}</span>
+            {order.is_priority && <Flame size={14} className="text-red-600 shrink-0" />}
           </span>
-          <span className="text-base font-extrabold text-primary shrink-0">
-            {formatCurrency(order.total_amount)}
-          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Quick indicators — tap the card to see the detail. */}
+            {orderComment && (
+              <span className="inline-flex items-center gap-0.5 text-accent-hover" title="Customer note">
+                <MessageSquare size={14} />
+              </span>
+            )}
+            {toppingsCount > 0 && (
+              <span
+                className="inline-flex items-center gap-0.5 text-amber-700 font-semibold"
+                title={`${toppingsCount} topping${toppingsCount !== 1 ? 's' : ''}`}
+              >
+                <Package size={14} />{toppingsCount}
+              </span>
+            )}
+            <span className="text-base font-extrabold text-primary">
+              {formatCurrency(order.total_amount)}
+            </span>
+          </div>
         </div>
       )}
 
@@ -429,6 +496,10 @@ export default function KitchenDashboard() {
   const [modalSubmitting, setModalSubmitting] = useState(false);
   const [modalError, setModalError] = useState(null);
   const [toast, setToast] = useState(null);
+  // Prominent "new order" banner, shown alongside the sound when a PAID order
+  // lands so the kitchen can't miss it even glancing away.
+  const [newOrderAlert, setNewOrderAlert] = useState(false);
+  const newOrderTimer = useRef(null);
   const audioRef = useRef(null);
 
   const isAdmin = user?.role === 'admin';
@@ -469,30 +540,77 @@ export default function KitchenDashboard() {
     readyFetch.refetch();
   }, [paidFetch, prepFetch, readyFetch]);
 
-  const playNotification = useCallback(() => {
-    if (!soundEnabled) return;
+  // Raw alert emitter — NOT gated by soundEnabled so it can double as a
+  // "test sound" that also unlocks the AudioContext on a user gesture.
+  const emitAlertSound = useCallback(() => {
     try {
       if (!audioRef.current)
         audioRef.current = new (window.AudioContext || window.webkitAudioContext)();
       const ctx = audioRef.current;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.setValueAtTime(880, ctx.currentTime);
-      osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.1);
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.4);
+      // Browsers suspend the context until a user gesture; resume so the alert
+      // still fires when the tab has been idle.
+      if (ctx.state === 'suspended') ctx.resume();
+
+      // Attention-grabbing alert: a bright ascending 3-note chime, repeated a
+      // few times and louder than a single beep so it carries over kitchen
+      // noise. Each note is a short triangle-wave ping with a fast attack/decay.
+      const notes = [784, 1047, 1319]; // G5 · C6 · E6 — rising major triad
+      const noteDur = 0.15;
+      const gap = 0.04;
+      const seqSpan = notes.length * (noteDur + gap);
+      const repeats = 3;
+      for (let r = 0; r < repeats; r++) {
+        const base = ctx.currentTime + r * (seqSpan + 0.16);
+        notes.forEach((freq, i) => {
+          const t = base + i * (noteDur + gap);
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, t);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          gain.gain.setValueAtTime(0.0001, t);
+          gain.gain.exponentialRampToValueAtTime(0.5, t + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, t + noteDur);
+          osc.start(t);
+          osc.stop(t + noteDur + 0.05);
+        });
+      }
     } catch {
       /* Audio not available */
     }
-  }, [soundEnabled]);
+  }, []);
+
+  const playNotification = useCallback(() => {
+    if (soundEnabled) emitAlertSound();
+  }, [soundEnabled, emitAlertSound]);
+
+  // Toggling sound ON plays a preview — confirms it's audible AND unlocks the
+  // AudioContext (a gesture) so later socket-triggered alerts actually sound.
+  const toggleSound = useCallback(() => {
+    setSoundEnabled((prev) => {
+      const next = !prev;
+      if (next) emitAlertSound();
+      return next;
+    });
+  }, [emitAlertSound]);
+
+  // Flash the prominent "new order" banner for a few seconds. Independent of
+  // the sound toggle so it's visible even with sound muted.
+  const flashNewOrder = useCallback(() => {
+    setNewOrderAlert(true);
+    if (newOrderTimer.current) clearTimeout(newOrderTimer.current);
+    newOrderTimer.current = setTimeout(() => setNewOrderAlert(false), 6000);
+  }, []);
+
+  useEffect(() => () => {
+    if (newOrderTimer.current) clearTimeout(newOrderTimer.current);
+  }, []);
 
   useSocket('/kitchen', locationId ? { location_id: locationId } : null, {
     order_paid: () => {
       playNotification();
+      flashNewOrder();
       refetchAll();
     },
     order_updated: refetchAll,
@@ -500,6 +618,7 @@ export default function KitchenDashboard() {
     order_created: refetchAll,
     order_priority: () => {
       playNotification();
+      flashNewOrder();
       refetchAll();
     },
     order_canceled: refetchAll,
@@ -606,6 +725,26 @@ export default function KitchenDashboard() {
 
   return (
     <div className="h-full flex flex-col -m-6">
+      {/* Prominent "new order" banner — top-center, bounces + pulses so it's
+          impossible to miss. Auto-dismisses after a few seconds; tap to clear. */}
+      {newOrderAlert && (
+        <div className="pointer-events-none fixed inset-x-0 top-4 z-50 flex justify-center px-4">
+          <button
+            type="button"
+            onClick={() => setNewOrderAlert(false)}
+            className="pointer-events-auto flex items-center gap-3 rounded-2xl bg-primary px-6 py-3.5 text-text-inverse shadow-[var(--shadow-elevated)] ring-4 ring-primary/30 animate-bounce"
+          >
+            <span className="relative flex h-3 w-3">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/80" />
+              <span className="relative inline-flex h-3 w-3 rounded-full bg-white" />
+            </span>
+            <Bell size={24} />
+            <span className="text-lg font-extrabold uppercase tracking-wide">New order received</span>
+            <XCircle size={20} className="opacity-70" />
+          </button>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="px-6 py-4 border-b border-border/60 bg-surface flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-4 flex-wrap">
@@ -634,7 +773,7 @@ export default function KitchenDashboard() {
 
         <button
           type="button"
-          onClick={() => setSoundEnabled((v) => !v)}
+          onClick={toggleSound}
           aria-pressed={soundEnabled}
           className={`min-h-[48px] min-w-[140px] inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-base font-bold transition-colors ${
             soundEnabled

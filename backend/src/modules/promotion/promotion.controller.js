@@ -27,7 +27,11 @@ const apply = asyncHandler(async (req, res) => {
 });
 
 const preview = asyncHandler(async (req, res) => {
-  const result = await promotionService.preview(req.body.code, req.body.order_total);
+  const result = await promotionService.preview(
+    req.body.code,
+    req.body.order_total,
+    req.body.user_id || null
+  );
   res.json(result);
 });
 

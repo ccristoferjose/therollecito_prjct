@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, useCallback } from 'react';
-import { api } from '@shared/utils/api';
+import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { api, setUnauthorizedHandler } from '@shared/utils/api';
 
 const StaffAuthContext = createContext(null);
 
@@ -25,6 +25,22 @@ export function StaffAuthProvider({ children }) {
     localStorage.removeItem('staff_token');
     localStorage.removeItem('staff_user');
   }, []);
+
+  // Triggered by the API layer on a 401 for an authenticated request: the JWT
+  // has expired or is invalid. Clear the session (which makes StaffRoute
+  // redirect to /staff/login) and flag it so the login page can explain why.
+  const expireSession = useCallback(() => {
+    sessionStorage.setItem('staff_session_expired', '1');
+    setToken(null);
+    setUser(null);
+    localStorage.removeItem('staff_token');
+    localStorage.removeItem('staff_user');
+  }, []);
+
+  useEffect(() => {
+    setUnauthorizedHandler(expireSession);
+    return () => setUnauthorizedHandler(null);
+  }, [expireSession]);
 
   const isAuthenticated = Boolean(token);
 

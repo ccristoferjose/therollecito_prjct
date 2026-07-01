@@ -18,7 +18,9 @@ const env = {
 
   jwt: {
     secret: process.env.JWT_SECRET,
-    expiresIn: process.env.JWT_EXPIRES_IN || '8h',
+    // 12h covers a full kitchen shift without the token expiring mid-service
+    // (which would silently stop the dashboard from loading new orders).
+    expiresIn: process.env.JWT_EXPIRES_IN || '12h',
   },
 
   firebase: {

@@ -69,7 +69,7 @@ export default {
     quickLinks: 'Quick Links',
     contact: 'Contact',
     hours: 'Hours',
-    hoursValue: 'Mon – Sun · 7 AM – 7 PM',
+    hoursValue: 'Mon – Fri · 3 PM – 9 PM',
     rights: 'All rights reserved.',
   },
 
