@@ -174,6 +174,21 @@ export default {
     trackOrder: 'Track Order',
     recentOrders: 'Your Recent Orders',
     lookupHint: 'Have a tracking code? Enter it below.',
+    // Payment / cancellation states
+    confirming: 'Confirming your payment…',
+    confirmingDesc: 'Hang tight — this only takes a moment.',
+    paymentFailed: 'Payment Failed',
+    paymentFailedDesc: 'Your payment could not be completed, so your order was not placed.',
+    paymentPending: 'Payment Not Completed',
+    paymentPendingDesc: "This order hasn't been paid, so it wasn't placed.",
+    notCharged: 'You have not been charged.',
+    backToMenu: 'Back to Menu',
+    canceled: 'Order Canceled',
+    canceledDesc: 'This order has been canceled.',
+    refundIssued: 'Refund issued',
+    refundedPre: 'A refund of',
+    refundedPost: 'has been issued to your original payment method. It may take 5–10 business days to appear.',
+    cancelReason: 'Reason from the restaurant',
   },
 
   // Language

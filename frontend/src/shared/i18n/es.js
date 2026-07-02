@@ -174,6 +174,21 @@ export default {
     trackOrder: 'Rastrear Pedido',
     recentOrders: 'Tus Pedidos Recientes',
     lookupHint: '\u00bfTienes un c\u00f3digo de rastreo? Ingr\u00e9salo abajo.',
+    // Estados de pago / cancelaci\u00f3n
+    confirming: 'Confirmando tu pago\u2026',
+    confirmingDesc: 'Un momento \u2014 esto solo toma unos segundos.',
+    paymentFailed: 'Pago Fallido',
+    paymentFailedDesc: 'No se pudo completar tu pago, por lo que tu orden no fue realizada.',
+    paymentPending: 'Pago No Completado',
+    paymentPendingDesc: 'Esta orden no ha sido pagada, por lo que no fue realizada.',
+    notCharged: 'No se te ha cobrado.',
+    backToMenu: 'Volver al Men\u00fa',
+    canceled: 'Orden Cancelada',
+    canceledDesc: 'Esta orden ha sido cancelada.',
+    refundIssued: 'Reembolso emitido',
+    refundedPre: 'Se ha emitido un reembolso de',
+    refundedPost: 'a tu m\u00e9todo de pago original. Puede tardar de 5 a 10 d\u00edas h\u00e1biles en reflejarse.',
+    cancelReason: 'Motivo del restaurante',
   },
 
   // Language
