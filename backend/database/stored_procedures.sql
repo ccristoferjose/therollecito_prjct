@@ -908,10 +908,12 @@ BEGIN
          o.guest_name, o.guest_phone, o.pickup_time,
          o.total_amount, o.subtotal_amount, o.discount_amount, o.processing_fee,
          o.promotion_code,
-         o.notes, o.created_at, o.updated_at
+         o.notes, o.created_at, o.updated_at,
+         p.status AS payment_status
     FROM `order` o
     JOIN order_status os ON os.id = o.status_id
     JOIN location l ON l.id = o.location_id
+    LEFT JOIN payment p ON p.order_id = o.id
    WHERE o.tracking_code = p_tracking_code;
 END //
 
