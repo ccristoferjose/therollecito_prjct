@@ -12,6 +12,21 @@ export interface KitchenOrder {
   pickup_time?: string | null;
   total_amount: number;
   items?: OrderItem[];
+
+  /**
+   * ORDER-LEVEL special instructions from checkout — distinct from the
+   * per-item notes on OrderItem. sp_order_list_by_location has always returned
+   * this, but the board dropped it, so a customer note like a gate code or an
+   * allergy warning never reached the kitchen screen.
+   */
+  notes?: string | null;
+
+  /** Contact details, so the kitchen can reach the customer about an order. */
+  guest_phone?: string | null;
+  user_first_name?: string | null;
+  user_last_name?: string | null;
+  user_email?: string | null;
+  user_phone?: string | null;
 }
 
 export interface KitchenColumn {
