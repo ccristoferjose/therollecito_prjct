@@ -33,9 +33,23 @@ applications:
       phases:
         preBuild:
           commands:
-            # `npm ci` (not `install`) so the lockfile is authoritative — the
-            # Next 15 -> 16 upgrade is pinned there.
-            - npm ci
+            # `npm install`, NOT `npm ci`, and deliberately so.
+            #
+            # `npm ci` requires package-lock.json to satisfy the dependency tree
+            # exactly, but npm only records the OPTIONAL platform-specific
+            # packages it resolved on the machine that generated the lock. This
+            # lock is generated on macOS arm64; Amplify builds on Linux x64 and
+            # needs transitive entries that never appear here — @emnapi/core is
+            # pulled in by @img/sharp-wasm32 on Linux and is absent from the lock
+            # no matter how many times it is regenerated locally. `npm ci` then
+            # fails with "can only install packages when your package.json and
+            # package-lock.json are in sync".
+            #
+            # `npm install` still honours the lockfile wherever it satisfies
+            # package.json, and fills in the platform gaps instead of aborting.
+            # Version drift is bounded: next and eslint-config-next are pinned
+            # exactly (16.3.5), so the framework cannot move underneath a build.
+            - npm install --no-audit --no-fund
         build:
           commands:
             - npm run build
