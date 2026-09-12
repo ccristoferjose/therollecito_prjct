@@ -1,154 +1,155 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Deploy Frontend to AWS Amplify
+# Frontend deployment — AWS Amplify
 #
-# Prerequisites:
-#   - AWS CLI configured
-#   - GitHub repo connected OR manual deploy
+# THE PRODUCTION APP IS:
+#   name    therollecito
+#   appId   d22yw2qalsyghv
+#   region  us-west-1
+#   domain  app.therollecito.com  ->  branch `main`
 #
-# Usage:
-#   ./deploy/amplify-frontend.sh --create     # First-time: create Amplify app
-#   ./deploy/amplify-frontend.sh --deploy     # Manual deploy (zip + upload)
-#   ./deploy/amplify-frontend.sh --env        # Set environment variables
+# It is NOT the app this script used to target. The previous version deployed to
+# a different app in us-east-1 that had no custom domain and therefore never
+# served a customer. Both happened to host the same Vite build, so the mistake
+# was invisible. That app has since been deleted.
+#
+# TWO DEPLOY MODELS, because the two frontends need different hosting:
+#
+#   VITE (current production, static)
+#     Built locally and uploaded as a zip. Works because a Vite build is a
+#     folder of static files.
+#       ./deploy/amplify-frontend.sh --deploy-vite
+#
+#   NEXT.JS (the migration target, SSR)
+#     CANNOT be deployed this way. It needs Server Components, ISR and the /api
+#     rewrite, so it requires platform WEB_COMPUTE and a connected Git repo —
+#     Amplify has to run the build itself. Deploys are triggered by pushing to
+#     the connected branch, or by --deploy-next below which starts a build job.
+#       ./deploy/amplify-frontend.sh --deploy-next
+#
+# See amplify.yml at the repo root for the monorepo build spec.
 # =============================================================================
 
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_NAME="yumyum-ceviches"
-REGION="us-east-1"
+
+# Production Amplify app — the one with the custom domain attached.
+APP_ID="d22yw2qalsyghv"
+APP_NAME="therollecito"
+REGION="us-west-1"
 BRANCH="main"
 
 info()  { echo "[INFO]  $*"; }
 error() { echo "[ERROR] $*" >&2; exit 1; }
 
-# Check for existing app
-get_app_id() {
-  aws amplify list-apps --region "${REGION}" \
-    --query "apps[?name=='${APP_NAME}'].appId" --output text 2>/dev/null || true
+# Fail loudly if the app ever moves, rather than deploying into a void.
+assert_app() {
+  local actual
+  actual=$(aws amplify get-app --app-id "${APP_ID}" --region "${REGION}" \
+    --query 'app.name' --output text 2>/dev/null || true)
+  [ "${actual}" = "${APP_NAME}" ] || \
+    error "Expected Amplify app '${APP_NAME}' at ${APP_ID} (${REGION}), found '${actual:-nothing}'."
 }
 
-# ---------------------------------------------------------------------------
-# --create: Create Amplify app for manual deploys
-# ---------------------------------------------------------------------------
-if [[ "${1:-}" == "--create" ]]; then
-  EXISTING=$(get_app_id)
-  if [ -n "${EXISTING}" ] && [ "${EXISTING}" != "None" ]; then
-    info "App already exists: ${EXISTING}"
-  else
-    info "Creating Amplify app '${APP_NAME}'..."
-    RESULT=$(aws amplify create-app \
-      --name "${APP_NAME}" \
-      --region "${REGION}" \
-      --platform WEB \
-      --no-cli-pager \
-      --output json)
+show_platform() {
+  aws amplify get-app --app-id "${APP_ID}" --region "${REGION}" \
+    --query 'app.{platform:platform,repository:repository}' --output json
+}
 
-    APP_ID=$(echo "${RESULT}" | grep -o '"appId": "[^"]*"' | cut -d'"' -f4)
-    info "App created: ${APP_ID}"
+case "${1:-}" in
+  # ---------------------------------------------------------------------------
+  --status)
+    assert_app
+    info "App: ${APP_NAME} (${APP_ID}) in ${REGION}"
+    show_platform
+    aws amplify list-domain-associations --app-id "${APP_ID}" --region "${REGION}" \
+      --query 'domainAssociations[].{domain:domainName,status:domainStatus}' --output json
+    ;;
 
-    # Create branch
-    aws amplify create-branch \
-      --app-id "${APP_ID}" \
-      --branch-name "${BRANCH}" \
-      --region "${REGION}" \
-      --no-cli-pager
+  # ---------------------------------------------------------------------------
+  # VITE — static zip upload. Valid only while the Vite app is production.
+  --deploy-vite)
+    assert_app
+    PLATFORM=$(aws amplify get-app --app-id "${APP_ID}" --region "${REGION}" --query 'app.platform' --output text)
+    if [ "${PLATFORM}" != "WEB" ]; then
+      error "App platform is ${PLATFORM}, not WEB. A zip upload only works for static hosting; use --deploy-next."
+    fi
 
-    info "Branch '${BRANCH}' created."
-  fi
+    info "Building Vite frontend..."
+    cd "${PROJECT_ROOT}/frontend"
+    npm ci
+    npm run build
 
-  APP_ID=$(get_app_id)
-  info "App ID: ${APP_ID}"
-  info "Console: https://${REGION}.console.aws.amazon.com/amplify/home?region=${REGION}#/${APP_ID}"
-  exit 0
-fi
+    info "Zipping build output..."
+    cd dist
+    rm -f /tmp/therollecito-frontend.zip
+    zip -rq /tmp/therollecito-frontend.zip . -x '*.DS_Store'
 
-# ---------------------------------------------------------------------------
-# --env: Set environment variables for the frontend build
-# ---------------------------------------------------------------------------
-if [[ "${1:-}" == "--env" ]]; then
-  APP_ID=$(get_app_id)
-  [ -z "${APP_ID}" ] || [ "${APP_ID}" = "None" ] && error "App not found. Run --create first."
+    info "Creating deployment..."
+    DEPLOY_RESULT=$(aws amplify create-deployment \
+      --app-id "${APP_ID}" --branch-name "${BRANCH}" --region "${REGION}" --output json)
+    JOB_ID=$(echo "${DEPLOY_RESULT}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["jobId"])')
+    UPLOAD_URL=$(echo "${DEPLOY_RESULT}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["zipUploadUrl"])')
 
-  # Read from the production frontend env. The local frontend/.env is dev-only.
-  ENV_FILE="${PROJECT_ROOT}/frontend/.env.production"
-  [ ! -f "${ENV_FILE}" ] && error "frontend/.env.production not found."
+    info "Uploading (job ${JOB_ID})..."
+    curl -s -T /tmp/therollecito-frontend.zip "${UPLOAD_URL}"
 
-  info "Setting Amplify environment variables from frontend/.env.production..."
+    aws amplify start-deployment \
+      --app-id "${APP_ID}" --branch-name "${BRANCH}" --job-id "${JOB_ID}" \
+      --region "${REGION}" --no-cli-pager
+    rm -f /tmp/therollecito-frontend.zip
+    info "Deployed. https://app.therollecito.com"
+    ;;
 
-  # Build environment map
-  ENV_VARS=""
-  while IFS='=' read -r key value; do
-    [[ "${key}" =~ ^#.*$ || -z "${key}" ]] && continue
-    ENV_VARS="${ENV_VARS}${key}=${value},"
-  done < "${ENV_FILE}"
-  ENV_VARS="${ENV_VARS%,}"
+  # ---------------------------------------------------------------------------
+  # NEXT.JS — triggers an Amplify-side build of the connected repo.
+  --deploy-next)
+    assert_app
+    PLATFORM=$(aws amplify get-app --app-id "${APP_ID}" --region "${REGION}" --query 'app.platform' --output text)
+    REPO=$(aws amplify get-app --app-id "${APP_ID}" --region "${REGION}" --query 'app.repository' --output text)
 
-  aws amplify update-branch \
-    --app-id "${APP_ID}" \
-    --branch-name "${BRANCH}" \
-    --environment-variables "${ENV_VARS}" \
-    --region "${REGION}" \
-    --no-cli-pager
+    if [ "${PLATFORM}" != "WEB_COMPUTE" ]; then
+      error "App platform is ${PLATFORM}. Next.js SSR needs WEB_COMPUTE. Change it in the Amplify console, then retry."
+    fi
+    if [ -z "${REPO}" ] || [ "${REPO}" = "None" ]; then
+      error "No repository connected. Amplify must build SSR apps itself — connect the repo in the console (it needs an OAuth handshake), then retry."
+    fi
 
-  info "Environment variables updated for branch '${BRANCH}'."
-  exit 0
-fi
+    info "Starting Amplify build for ${BRANCH}..."
+    aws amplify start-job \
+      --app-id "${APP_ID}" --branch-name "${BRANCH}" \
+      --job-type RELEASE --region "${REGION}" --no-cli-pager
+    info "Build started. Watch it:"
+    info "  https://${REGION}.console.aws.amazon.com/amplify/home?region=${REGION}#/${APP_ID}/${BRANCH}"
+    ;;
 
-# ---------------------------------------------------------------------------
-# --deploy: Build locally and deploy to Amplify
-# ---------------------------------------------------------------------------
-if [[ "${1:-}" == "--deploy" ]]; then
-  APP_ID=$(get_app_id)
-  [ -z "${APP_ID}" ] || [ "${APP_ID}" = "None" ] && error "App not found. Run --create first."
+  # ---------------------------------------------------------------------------
+  --env)
+    assert_app
+    ENV_FILE="${PROJECT_ROOT}/frontend/.env.production"
+    [ -f "${ENV_FILE}" ] || error "frontend/.env.production not found."
+    info "Setting branch env vars from frontend/.env.production..."
+    ENV_VARS=""
+    while IFS='=' read -r key value; do
+      [[ "${key}" =~ ^#.*$ || -z "${key}" ]] && continue
+      ENV_VARS="${ENV_VARS}${key}=${value},"
+    done < "${ENV_FILE}"
+    aws amplify update-branch \
+      --app-id "${APP_ID}" --branch-name "${BRANCH}" \
+      --environment-variables "${ENV_VARS%,}" --region "${REGION}" --no-cli-pager
+    info "Environment variables updated."
+    ;;
 
-  info "Building frontend..."
-  cd "${PROJECT_ROOT}/frontend"
-  npm ci
-  npm run build
+  *)
+    cat <<USAGE
+Usage:
+  ./deploy/amplify-frontend.sh --status        Show app platform, repo and domains
+  ./deploy/amplify-frontend.sh --deploy-vite   Build + zip-upload the Vite app (static only)
+  ./deploy/amplify-frontend.sh --deploy-next   Trigger an Amplify build of the Next app (needs WEB_COMPUTE + repo)
+  ./deploy/amplify-frontend.sh --env           Push frontend/.env.production to the branch
 
-  info "Zipping build output..."
-  cd dist
-  zip -r /tmp/yumyum-frontend.zip . -x '*.DS_Store'
-
-  info "Deploying to Amplify..."
-  DEPLOY_RESULT=$(aws amplify create-deployment \
-    --app-id "${APP_ID}" \
-    --branch-name "${BRANCH}" \
-    --region "${REGION}" \
-    --output json)
-
-  JOB_ID=$(echo "${DEPLOY_RESULT}" | grep -o '"jobId": "[^"]*"' | cut -d'"' -f4)
-  UPLOAD_URL=$(echo "${DEPLOY_RESULT}" | grep -o '"zipUploadUrl": "[^"]*"' | cut -d'"' -f4)
-
-  info "Uploading build (job: ${JOB_ID})..."
-  curl -s -T /tmp/yumyum-frontend.zip "${UPLOAD_URL}"
-
-  aws amplify start-deployment \
-    --app-id "${APP_ID}" \
-    --branch-name "${BRANCH}" \
-    --job-id "${JOB_ID}" \
-    --region "${REGION}" \
-    --no-cli-pager
-
-  rm -f /tmp/yumyum-frontend.zip
-
-  # Get app URL
-  APP_URL=$(aws amplify get-branch \
-    --app-id "${APP_ID}" \
-    --branch-name "${BRANCH}" \
-    --region "${REGION}" \
-    --query 'branch.displayName' --output text 2>/dev/null || true)
-
-  info "============================================"
-  info "Deployment started!"
-  info "Console: https://${REGION}.console.aws.amazon.com/amplify/home?region=${REGION}#/${APP_ID}"
-  info "URL: https://${BRANCH}.${APP_ID}.amplifyapp.com"
-  info "============================================"
-  exit 0
-fi
-
-echo "Usage:"
-echo "  ./deploy/amplify-frontend.sh --create   # Create Amplify app"
-echo "  ./deploy/amplify-frontend.sh --env       # Set env vars from frontend/.env.production"
-echo "  ./deploy/amplify-frontend.sh --deploy    # Build + deploy"
+Production app: ${APP_NAME} (${APP_ID}) in ${REGION} -> app.therollecito.com
+USAGE
+    ;;
+esac

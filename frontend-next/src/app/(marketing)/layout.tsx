@@ -1,9 +1,17 @@
 import Link from 'next/link';
+import { LangProvider } from '@/providers/lang-provider';
+import SiteFooter from '@/components/layout/site-footer';
 
 /**
  * PUBLIC marketing layout — Server Component. SEO-focused chrome (header/footer)
  * shared by the indexable marketing pages. Exposes only client-facing actions
  * (browse + order); no staff/admin entry points here.
+ *
+ * The footer is the SAME component the ordering pages use. It previously had a
+ * one-line placeholder here, so home and /locations showed nothing like the
+ * real footer. SiteFooter is a Client Component (its copy is translated), hence
+ * the LangProvider — scoped to the footer alone so the page content above it
+ * stays fully server-rendered for SEO.
  */
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -27,11 +35,9 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
 
       <main className="flex-1">{children}</main>
 
-      <footer className="border-t border-border bg-surface-warm">
-        <div className="mx-auto max-w-6xl px-4 py-8 text-sm text-text-secondary">
-          © The Rollecito — fresh-baked rolls, ordered online for pickup.
-        </div>
-      </footer>
+      <LangProvider>
+        <SiteFooter />
+      </LangProvider>
     </div>
   );
 }

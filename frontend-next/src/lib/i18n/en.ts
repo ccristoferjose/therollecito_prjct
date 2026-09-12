@@ -12,14 +12,14 @@ const en = {
 
   // Landing page
   hero: {
-    title: 'Freshly Baked Happiness',
-    titleHighlight: 'in Every Roll',
+    title: 'Breakfast, Baked Fresh',
+    titleHighlight: 'Rolls & More',
     subtitle:
       'Try a cinnamon roll like the ones from home: dough hand-worked with fresh, organic ingredients, delicious cinnamon, and every little roll shaped with care. We bake them daily so they always come out tender and full of flavor. Perfect for breakfast, an after-meal treat, or to share with friends.',
     orderNow: 'Order Now',
     viewMenu: 'View Menu',
     viewLocations: 'View Locations',
-    madeDaily: 'Made fresh daily',
+    madeDaily: 'Breakfast & rolls, made fresh daily',
   },
   features: {
     quickPickup: 'Warm Pickup',
@@ -30,15 +30,15 @@ const en = {
     securePaymentsDesc: 'Pay safely online with Stripe. No accounts, no fuss, just rolls.',
   },
   favorites: {
-    title: 'Our Most-Loved Rolls',
-    subtitle: 'A batch of customer favorites — warm, gooey, and always fresh.',
+    title: 'Most-Loved on the Menu',
+    subtitle: 'From morning plates to afternoon rolls — the ones people come back for.',
     viewFullMenu: 'View the Full Menu',
   },
   about: {
-    title: 'A small bakery with a big heart',
+    title: 'A small kitchen with a big heart',
     body: 'Our cinnamon rolls are handcrafted daily with fresh, organic ingredients. The dough is kneaded and every roll is shaped by hand to guarantee unmatched texture, aroma, and homemade flavor. Baked daily to bring you maximum freshness and quality.',
     pillOne: 'Real butter & fresh cream',
-    pillTwo: 'Hand-rolled every morning',
+    pillTwo: 'Breakfast served from 7 AM',
     pillThree: 'Small-batch recipes',
   },
   testimonials: {
@@ -60,8 +60,8 @@ const en = {
     ],
   },
   cta: {
-    title: 'Come for the rolls. Stay for the smell.',
-    subtitle: 'Order online for warm pickup, or stop by one of our bakeries today.',
+    title: 'Come for breakfast. Stay for the rolls.',
+    subtitle: 'Pick your pickup time, and we will have it warm and waiting.',
     startOrder: 'Start Your Order',
   },
   footer: {
@@ -69,7 +69,7 @@ const en = {
     quickLinks: 'Quick Links',
     contact: 'Contact',
     hours: 'Hours',
-    hoursValue: 'Mon – Sun · 7 AM – 7 PM',
+    hoursValue: 'Mon – Fri · 7 AM – 11 AM\n Everyday · 3 PM – 9 PM',
     rights: 'All rights reserved.',
   },
 

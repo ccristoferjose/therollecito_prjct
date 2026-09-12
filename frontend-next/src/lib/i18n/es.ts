@@ -12,14 +12,14 @@ const es = {
 
   // Landing page
   hero: {
-    title: 'Felicidad Reci\u00e9n Horneada',
-    titleHighlight: 'en Cada Rollecito',
+    title: 'Desayuno Reci\u00e9n Hecho',
+    titleHighlight: 'y Rollos Todo el D\u00eda',
     subtitle:
       'Prueba un cinnamon roll como los de casa: masa trabajada a mano con ingredientes frescos y org\u00e1nicos, canela deliciosa y cada rollito enrollado con cari\u00f1o. Los horneamos a diario para que siempre est\u00e9n tiernos y llenos de sabor. Perfectos para tu desayuno, sobremesa o para compartir con amigos.',
     orderNow: 'Ordenar Ahora',
     viewMenu: 'Ver Men\u00fa',
     viewLocations: 'Ver Ubicaciones',
-    madeDaily: 'Reci\u00e9n horneado cada d\u00eda',
+    madeDaily: 'Desayuno y rollos, hechos cada d\u00eda',
   },
   features: {
     quickPickup: 'Recogida Tibia',
