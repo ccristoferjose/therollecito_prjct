@@ -45,6 +45,19 @@ const nextConfig: NextConfig = {
   // The localhost entry is added ONLY outside production, so a dev-only,
   // http-scheme host can never reach a production build.
   images: {
+    // Skip the image optimizer OUTSIDE production.
+    //
+    // Menu image URLs are built from S3_PUBLIC_URL_BASE, which in local dev is
+    // http://localhost:9000 (MinIO). That address is correct for the BROWSER but
+    // wrong for the optimizer, which runs server-side inside the Next container
+    // where localhost is the container itself — verified: localhost:9000 gives
+    // ECONNREFUSED in there while minio:9000 returns 200. A single stored URL
+    // cannot satisfy both, so in dev the browser fetches MinIO directly and the
+    // optimizer stays out of the way.
+    //
+    // Production is unaffected: S3/CloudFront URLs resolve from both sides, so
+    // optimization (and the SSRF protections below) remain fully active.
+    unoptimized: process.env.NODE_ENV !== 'production',
     // Next 16 added a security restriction that blocks optimizing images served
     // from local IPs, to close an SSRF vector. Without this the MinIO images
     // above are rejected with a 400 even though the host IS in remotePatterns.
