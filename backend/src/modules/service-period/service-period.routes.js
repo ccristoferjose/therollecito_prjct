@@ -27,6 +27,19 @@ router.get(
   controller.resolve,
 );
 
+// The location's published schedule: every active period with its weekly hours.
+//
+// Public on purpose — "we serve breakfast 7:00-11:00" is exactly what a customer
+// needs to see on the marketing pages, and it lets those pages stay correct on
+// their own when an admin edits a period. Distinct from /bookable, which answers
+// the narrower "what can I still order for TODAY" and hides windows that have
+// already passed. Nothing sensitive here: period names, times and menu names.
+router.get(
+  '/location/:locationId/schedule',
+  [param('locationId').isInt({ gt: 0 }), validateRequest],
+  controller.listByLocation,
+);
+
 // Periods still bookable on a date — drives the pickup picker.
 router.get(
   '/location/:locationId/bookable',

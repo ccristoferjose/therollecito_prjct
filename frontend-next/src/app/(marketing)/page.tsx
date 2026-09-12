@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import Image from 'next/image';
-import { ArrowRight, Clock, MapPin, ShieldCheck, Sparkles, Heart, Leaf, Star } from 'lucide-react';
+import { ArrowRight, Clock, MapPin, ShieldCheck, Sparkles, Heart, Leaf, Star, Sunrise, Sandwich, CalendarClock } from 'lucide-react';
 import en from '@/lib/i18n/en';
 import { getLocations } from '@/features/locations/queries';
 import { getMenuForLocation } from '@/features/menu/queries';
@@ -10,19 +10,20 @@ import { brandJsonLd } from '@/lib/seo/schema';
 import { env } from '@/lib/config/env';
 import JsonLd from '@/components/seo/json-ld';
 import LocationPicker from '@/features/locations/location-picker';
+import { getPublishedPeriods } from '@/features/service-period/public-queries';
 import type { MenuItem } from '@/lib/types';
 
 // SEO-sensitive, server-data-driven landing → Server Component + ISR.
 export const revalidate = 300;
 
 export const metadata: Metadata = {
-  title: 'Order fresh-baked rolls online for pickup',
+  title: 'Breakfast & fresh-baked rolls — order online for pickup',
   description:
-    'Browse the menu, order online, and pick up fresh-baked rolls at your nearest The Rollecito location. No account required.',
+    'Breakfast plates, coffee and hand-rolled cinnamon rolls. Choose your pickup time, order online, and collect it warm at The Rollecito. No account required.',
   alternates: { canonical: '/' },
   openGraph: {
-    title: 'The Rollecito — order online, pick up fresh',
-    description: 'Fresh-baked rolls, ordered online for pickup at a location near you.',
+    title: 'The Rollecito — breakfast, rolls, ordered online',
+    description: 'Breakfast in the morning, rolls all day. Pick your time, we will have it warm.',
   },
 };
 
@@ -40,6 +41,9 @@ async function getFeatured(): Promise<MenuItem[]> {
 
 export default async function LandingPage() {
   const [featured, locations] = await Promise.all([getFeatured(), getLocations()]);
+  // Real service periods for the primary location, so the "what we serve when"
+  // section below stays true when an admin edits the schedule.
+  const periods = locations[0] ? await getPublishedPeriods(locations[0].id) : [];
 
   const features = [
     { icon: Clock, title: t.features.quickPickup, desc: t.features.quickPickupDesc },
@@ -128,6 +132,73 @@ export default async function LandingPage() {
           </div>
         </div>
       </section>
+
+
+      {/* SERVICE PERIODS — the point of the refresh: The Rollecito is not just
+          rolls any more. Hours come from the live schedule, so this section
+          cannot drift from what the kitchen actually serves. Hidden entirely if
+          no periods are published rather than showing an empty shell. */}
+      {periods.length > 0 && (
+        <section className="border-y border-[#F2D6B3] bg-surface">
+          <div className="mx-auto max-w-6xl px-4 py-16">
+            <div className="mb-10 text-center">
+              <span className="inline-flex items-center gap-2 rounded-full bg-accent/15 px-4 py-1.5 text-sm font-semibold text-accent-hover">
+                <CalendarClock size={14} />
+                Two menus, one kitchen
+              </span>
+              <h2 className="mt-4 text-3xl font-extrabold text-primary-dark sm:text-4xl">
+                What we&rsquo;re serving, and when
+              </h2>
+              <p className="mx-auto mt-3 max-w-xl text-primary-dark/70">
+                Pick your pickup time first &mdash; the menu follows. Breakfast in the morning,
+                rolls and plates the rest of the day.
+              </p>
+            </div>
+
+            <div className="grid gap-6 sm:grid-cols-2">
+              {periods.map((period, i) => {
+                const Icon = i === 0 ? Sunrise : Sandwich;
+                return (
+                  <article
+                    key={period.id}
+                    className="group relative overflow-hidden rounded-3xl border border-[#F2D6B3] bg-[#FFF1DC] p-7 shadow-[var(--shadow-card)] transition-all duration-300 hover:-translate-y-1 hover:shadow-[var(--shadow-elevated)]"
+                  >
+                    <div className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-accent/10 transition-transform duration-500 group-hover:scale-125" />
+                    <div className="relative">
+                      <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/25">
+                        <Icon size={22} className="text-accent-hover" />
+                      </span>
+                      <h3 className="mt-4 text-2xl font-extrabold text-primary-dark">{period.name}</h3>
+                      <p className="mt-1 text-sm font-semibold text-primary">{period.menuName}</p>
+                      <dl className="mt-5 space-y-2 text-sm text-primary-dark/75">
+                        <div className="flex items-center gap-2">
+                          <Clock size={14} className="shrink-0 text-accent-hover" />
+                          <dt className="sr-only">Hours</dt>
+                          <dd className="font-semibold text-primary-dark">{period.hours}</dd>
+                        </div>
+                        {period.days && (
+                          <div className="flex items-center gap-2">
+                            <CalendarClock size={14} className="shrink-0 text-accent-hover" />
+                            <dt className="sr-only">Days</dt>
+                            <dd>{period.days}</dd>
+                          </div>
+                        )}
+                      </dl>
+                      <Link
+                        href="/order"
+                        className="mt-6 inline-flex items-center gap-2 text-sm font-bold text-primary transition-colors hover:text-accent-hover"
+                      >
+                        Order for {period.name.toLowerCase()}
+                        <ArrowRight size={15} />
+                      </Link>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* FEATURED */}
       <section className="bg-[#FFF1DC]">

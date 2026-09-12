@@ -1,0 +1,52 @@
+# AWS Amplify build spec — Next.js frontend (SSR).
+#
+# This repo is a monorepo, so `appRoot` points Amplify at frontend-next. The
+# Vite app in frontend/ is NOT built here; it is the outgoing frontend and is
+# deployed separately until the cutover is done.
+#
+# REQUIREMENTS ON THE AMPLIFY APP (these cannot be set from this file):
+#   1. platform must be WEB_COMPUTE, not WEB. WEB is static-only hosting and
+#      cannot run Server Components, ISR, or the /api rewrite.
+#   2. The app must be connected to the Git repository. Amplify builds SSR apps
+#      itself — the manual `create-deployment` zip flow is static-only and cannot
+#      deploy this.
+#
+# BRANCH ENVIRONMENT VARIABLES (set on the branch, not here — they are secrets
+# or environment-specific):
+#   BACKEND_ORIGIN                        https://api.therollecito.com
+#   NEXT_PUBLIC_SOCKET_URL                https://api.therollecito.com
+#   NEXT_PUBLIC_SITE_URL                  https://app.therollecito.com
+#   NEXT_PUBLIC_FIREBASE_API_KEY          (from frontend-next/.env.local)
+#   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+#   NEXT_PUBLIC_FIREBASE_PROJECT_ID
+#   NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+#   NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+#   NEXT_PUBLIC_FIREBASE_APP_ID
+#
+# NEXT_PUBLIC_API_URL is deliberately left UNSET so the browser uses the
+# relative /api path served by the rewrite in next.config.ts. Setting it would
+# make the browser call the backend cross-origin and require CORS for this host.
+version: 1
+applications:
+  - appRoot: frontend-next
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            # `npm ci` (not `install`) so the lockfile is authoritative — the
+            # Next 15 -> 16 upgrade is pinned there.
+            - npm ci
+        build:
+          commands:
+            - npm run build
+      artifacts:
+        # For WEB_COMPUTE, Amplify reads the whole .next directory, including
+        # the server output. A static `out/` directory is NOT produced by this
+        # app and would drop every SSR route.
+        baseDirectory: .next
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - node_modules/**/*
+          - .next/cache/**/*

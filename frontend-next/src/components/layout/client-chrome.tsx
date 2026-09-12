@@ -1,22 +1,13 @@
 'use client';
 
 import Link from 'next/link';
+import SiteFooter from '@/components/layout/site-footer';
 import Image from 'next/image';
-import { ShoppingBag, MapPin, User, Search, Mail, Phone, Clock } from 'lucide-react';
+import { ShoppingBag, MapPin, User, Search } from 'lucide-react';
 import { useCart } from '@/providers/cart-provider';
 import { useClientAuth } from '@/providers/client-auth-provider';
 import { useLang } from '@/providers/lang-provider';
 import LangSwitcher from '@/components/ui/lang-switcher';
-
-function InstagramGlyph(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-      <rect x="3" y="3" width="18" height="18" rx="5" />
-      <circle cx="12" cy="12" r="4" />
-      <circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
 
 function BrandMark() {
   return (
@@ -82,55 +73,7 @@ export default function ClientChrome({ children }: { children: React.ReactNode }
 
       <main className="flex-1">{children}</main>
 
-      <footer className="bg-primary-dark text-[#FFF1DC]">
-        <div className="mx-auto max-w-6xl px-4 py-14">
-          <div className="grid gap-10 md:grid-cols-4">
-            <div className="md:col-span-2">
-              <BrandMark />
-              <p className="mt-4 max-w-sm leading-relaxed text-[#FFF1DC]/80">{t.footer.tagline}</p>
-              <div className="mt-5 flex items-center gap-3">
-                <a
-                  href="https://www.instagram.com/therollecito"
-                  aria-label="Instagram"
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-[#FFF1DC]/10 transition-colors hover:bg-accent-hover"
-                >
-                  <InstagramGlyph width="16" height="16" />
-                </a>
-              </div>
-            </div>
-            <div>
-              <h4 className="mb-4 font-bold text-[#FFF1DC]">{t.footer.quickLinks}</h4>
-              <ul className="space-y-2 text-sm text-[#FFF1DC]/80">
-                <li><Link href="/" className="hover:text-accent">{t.nav.home}</Link></li>
-                <li><Link href="/order" className="hover:text-accent">{t.nav.menu}</Link></li>
-                <li><Link href="/locations" className="hover:text-accent">{t.nav.locations}</Link></li>
-                <li><Link href="/track" className="hover:text-accent">{t.tracking.trackOrder}</Link></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="mb-4 font-bold text-[#FFF1DC]">{t.footer.contact}</h4>
-              <ul className="space-y-2.5 text-sm text-[#FFF1DC]/80">
-                <li className="flex items-center gap-2">
-                  <Mail size={14} className="text-accent" />
-                  <a href="mailto:hello@therollecito.com" className="hover:text-accent">hello@therollecito.com</a>
-                </li>
-                <li className="flex items-center gap-2">
-                  <Phone size={14} className="text-accent" />
-                  <span>(305) 555-0101</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <Clock size={14} className="mt-0.5 shrink-0 text-accent" />
-                  <span>{t.footer.hoursValue}</span>
-                </li>
-              </ul>
-            </div>
-          </div>
-          <div className="mt-10 flex flex-col items-center justify-between gap-3 border-t border-[#FFF1DC]/15 pt-6 text-sm text-[#FFF1DC]/60 sm:flex-row">
-            <p>&copy; The Rollecito. {t.footer.rights}</p>
-            <p>Baked with love in Miami.</p>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }

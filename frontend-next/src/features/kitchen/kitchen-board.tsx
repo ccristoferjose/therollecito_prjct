@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Clock, ChefHat, Bell, CheckCircle, Volume2, VolumeX, AlertTriangle,
   User, Timer, MapPin, CreditCard, RotateCcw, XCircle, Flame, MoreVertical, ArrowRight, Package,
+  MessageSquare, Phone, Mail,
 } from 'lucide-react';
 import Modal from '@/components/ui/modal';
 import { useStaffAuth } from '@/providers/staff-auth-provider';
@@ -112,6 +113,20 @@ function KanbanCard({
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const itemCount = order.items?.length || 0;
 
+  // Mirrors the Vite kitchen card. A registered customer has no guest_name, so
+  // fall back to their account name rather than showing "Registered User".
+  const registeredName = [order.user_first_name, order.user_last_name].filter(Boolean).join(' ');
+  const customerName = order.guest_name || registeredName || 'Registered customer';
+  const customerPhone = order.guest_phone || order.user_phone || null;
+  const customerEmail = order.user_email || null;
+
+  // Order-level comment (checkout "special instructions"), distinct from the
+  // per-item notes rendered inside the items list.
+  const orderComment = order.notes && order.notes.trim() ? order.notes.trim() : null;
+  // Total selected options across the order — surfaced on the collapsed card so
+  // staff can see at a glance that an order has customisations to read.
+  const toppingsCount = (order.items || []).reduce((n, it) => n + (it.options?.length || 0), 0);
+
   return (
     <article
       onClick={() => onSelect(order.id)}
@@ -186,13 +201,47 @@ function KanbanCard({
 
           <div className="flex items-center gap-2 border-t border-border/60 px-4 py-2 text-sm">
             <User size={16} className="shrink-0 text-text-secondary" />
-            <span className="truncate font-semibold text-primary-dark">{order.guest_name || 'Registered User'}</span>
+            <span className="truncate font-semibold text-primary-dark">{customerName}</span>
             {order.pickup_time && (
               <span className="ml-auto text-xs text-text-secondary">
                 Pickup {new Date(order.pickup_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
               </span>
             )}
           </div>
+
+          {/* Contact details — the kitchen needs a way to reach the customer
+              about a missing item or a note it cannot fulfil. */}
+          {(customerPhone || customerEmail) && (
+            <div className="flex flex-wrap items-center gap-3 px-4 pb-2 text-xs text-text-secondary">
+              {customerPhone && (
+                <a href={`tel:${customerPhone}`} className="inline-flex items-center gap-1 hover:text-primary">
+                  <Phone size={12} /> {customerPhone}
+                </a>
+              )}
+              {customerEmail && (
+                <a href={`mailto:${customerEmail}`} className="inline-flex items-center gap-1 truncate hover:text-primary">
+                  <Mail size={12} /> {customerEmail}
+                </a>
+              )}
+            </div>
+          )}
+
+          {/* ORDER-LEVEL note from checkout. High-contrast callout so the
+              kitchen never misses it — this is separate from per-item notes
+              rendered further down. */}
+          {orderComment && (
+            <div className="mx-4 mb-1 mt-1 rounded-xl border-2 border-accent/40 bg-accent/10 px-3 py-2.5">
+              <div className="mb-1 flex items-center gap-1.5">
+                <MessageSquare size={14} className="text-accent-hover" />
+                <p className="text-[11px] font-bold uppercase tracking-wide text-accent-hover">
+                  Customer note
+                </p>
+              </div>
+              <p className="whitespace-pre-wrap break-words text-sm font-semibold text-primary-dark">
+                {orderComment}
+              </p>
+            </div>
+          )}
 
           <div className="space-y-2.5 border-t border-border/60 bg-[#FFF1DC]/40 px-4 py-3">
             {(order.items || []).map((item) => (
@@ -232,10 +281,28 @@ function KanbanCard({
         <div className="flex items-center justify-between gap-2 px-4 pb-2.5 text-sm">
           <span className="flex items-center gap-1.5 truncate font-semibold text-primary-dark">
             <User size={14} className="shrink-0 text-text-secondary" />
-            {order.guest_name || 'Registered User'}
-            {order.is_priority && <Flame size={14} className="text-red-600" />}
+            {customerName}
+            {order.is_priority && <Flame size={14} className="shrink-0 text-red-600" />}
           </span>
-          <span className="shrink-0 text-base font-extrabold text-primary">{formatCurrency(order.total_amount)}</span>
+          <div className="flex shrink-0 items-center gap-2">
+            {/* Quick indicators so a collapsed card still signals that there is
+                something to read before starting the order. */}
+            {orderComment && (
+              <span className="inline-flex items-center gap-0.5 text-accent-hover" title="Customer note">
+                <MessageSquare size={14} />
+              </span>
+            )}
+            {toppingsCount > 0 && (
+              <span
+                className="inline-flex items-center gap-0.5 font-semibold text-amber-700"
+                title={`${toppingsCount} topping${toppingsCount !== 1 ? 's' : ''}`}
+              >
+                <Package size={14} />
+                {toppingsCount}
+              </span>
+            )}
+            <span className="text-base font-extrabold text-primary">{formatCurrency(order.total_amount)}</span>
+          </div>
         </div>
       )}
 
