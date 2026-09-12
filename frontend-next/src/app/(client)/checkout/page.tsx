@@ -1,6 +1,10 @@
 'use client';
 
+<<<<<<< HEAD
 import { useState, useEffect, useMemo } from 'react';
+=======
+import { useState, useEffect } from 'react';
+>>>>>>> origin/feature/main-dashboard
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, CreditCard, Clock, User, CheckCircle, MapPin, ShieldCheck, AlertTriangle, Tag, X, CalendarClock } from 'lucide-react';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
@@ -12,9 +16,12 @@ import { useFetch } from '@/lib/hooks/use-fetch';
 import { formatCurrency, formatOrderNumber } from '@/lib/utils/format';
 import { api, ApiError } from '@/lib/api/client';
 import { addGuestOrder } from '@/lib/utils/guest-orders';
+<<<<<<< HEAD
 import { validateCart } from '@/features/service-period/queries';
 import { usePickup } from '@/providers/pickup-provider';
 import PickupPicker from '@/features/service-period/pickup-picker';
+=======
+>>>>>>> origin/feature/main-dashboard
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import Input from '@/components/ui/input';
@@ -82,6 +89,7 @@ function buildLocalDateTime(slotMinutes: number, now = new Date()): string {
   return `${yyyy}-${mm}-${dd}T${minutesToHHMM(slotMinutes)}:00`;
 }
 
+<<<<<<< HEAD
 /**
  * Stripe instances are cached per publishable key at MODULE scope.
  *
@@ -114,6 +122,11 @@ interface PaymentStatus {
   publishable_key?: string | null;
   /** Set when Stripe was MEANT to work but is misconfigured. Never simulate then. */
   config_error?: string | null;
+=======
+interface PaymentStatus {
+  stripe_configured: boolean;
+  publishable_key?: string | null;
+>>>>>>> origin/feature/main-dashboard
   fee_percent?: number;
   fee_fixed?: number;
 }
@@ -185,7 +198,11 @@ function StripePaymentForm({
 
   return (
     <form onSubmit={handlePay} className="space-y-4">
+<<<<<<< HEAD
       <PaymentElement options={PAYMENT_ELEMENT_OPTIONS} />
+=======
+      <PaymentElement options={{ layout: 'tabs' }} />
+>>>>>>> origin/feature/main-dashboard
       {payError && (
         <div className="flex items-center gap-2 rounded-lg border border-error/20 bg-red-50 p-3 text-sm text-error">
           <AlertTriangle size={14} /> {payError}
@@ -227,9 +244,12 @@ export default function CheckoutPage() {
   const [displayNumber, setDisplayNumber] = useState<number | null>(null);
   const [trackingCode, setTrackingCode] = useState<string | null>(null);
   const [stripeConfigured, setStripeConfigured] = useState<boolean | null>(null);
+<<<<<<< HEAD
   // Non-null means Stripe keys are present but unusable — checkout must refuse
   // rather than quietly fall back to a simulated payment.
   const [stripeConfigError, setStripeConfigError] = useState<string | null>(null);
+=======
+>>>>>>> origin/feature/main-dashboard
   const [step, setStep] = useState<'info' | 'payment' | 'processing'>('info');
 
   const [promoInput, setPromoInput] = useState('');
@@ -245,10 +265,13 @@ export default function CheckoutPage() {
   }, []);
   const schedule = computeScheduleState(currentLocation, new Date());
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
+<<<<<<< HEAD
   // Pickup time carried over from the order/cart pages, resolved against the
   // location's service periods. When present it supersedes the legacy
   // same-day slot picker below.
   const { pickupTime } = usePickup();
+=======
+>>>>>>> origin/feature/main-dashboard
 
   useEffect(() => {
     if (schedule.mode === 'before_open') setSelectedSlot(schedule.slots[0]?.minutes ?? null);
@@ -328,15 +351,21 @@ export default function CheckoutPage() {
       .get<PaymentStatus>('/payments/status')
       .then((data) => {
         setStripeConfigured(data.stripe_configured);
+<<<<<<< HEAD
         setStripeConfigError(data.config_error || null);
         if (data.stripe_configured && data.publishable_key) {
           setStripePromise(getStripe(data.publishable_key));
+=======
+        if (data.stripe_configured && data.publishable_key) {
+          setStripePromise(loadStripe(data.publishable_key));
+>>>>>>> origin/feature/main-dashboard
         }
         setFeeRates({ percent: Number(data.fee_percent) || 0, fixed: Number(data.fee_fixed) || 0 });
       })
       .catch(() => setStripeConfigured(false));
   }, []);
 
+<<<<<<< HEAD
   // Stable options identity. A fresh object each render makes <Elements> call
   // elements.update() on every parent re-render, which is churn at best and a
   // source of element-lifecycle surprises at worst.
@@ -345,6 +374,8 @@ export default function CheckoutPage() {
     [clientSecret],
   );
 
+=======
+>>>>>>> origin/feature/main-dashboard
   function completeOrder(code?: string) {
     const finalCode = code || trackingCode;
     if (finalCode) addGuestOrder(finalCode);
@@ -360,6 +391,7 @@ export default function CheckoutPage() {
     setError(null);
 
     try {
+<<<<<<< HEAD
       // A pickup time chosen on the order/cart pages is authoritative — it was
       // resolved against the location's service periods, which may span days
       // the legacy same-day window knows nothing about. The legacy slot checks
@@ -410,6 +442,20 @@ export default function CheckoutPage() {
         }
       }
 
+=======
+      if (schedule.mode === 'closed') {
+        setError('This location is closed for the day. Please order again tomorrow.');
+        setLoading(false);
+        return;
+      }
+      if (schedule.mode === 'before_open' && selectedSlot == null) {
+        setError('Please pick a pickup time.');
+        setLoading(false);
+        return;
+      }
+
+      const pickupTimeStr = selectedSlot != null ? buildLocalDateTime(selectedSlot) : null;
+>>>>>>> origin/feature/main-dashboard
       const order = await api.post<Order>('/orders', {
         location_id: locationId,
         user_id: dbUser?.id || null,
@@ -441,6 +487,7 @@ export default function CheckoutPage() {
         const intent = await api.post<{ client_secret: string }>('/payments/create-intent', { order_id: order.id });
         setClientSecret(intent.client_secret);
         setStep('payment');
+<<<<<<< HEAD
       } else if (stripeConfigError) {
         // Keys are present but broken. Simulating here would invent a paid order
         // and bury the real problem, so stop and say exactly what is wrong.
@@ -448,6 +495,9 @@ export default function CheckoutPage() {
         setStep('info');
       } else {
         // Genuinely no Stripe configured — the legitimate local-dev path.
+=======
+      } else {
+>>>>>>> origin/feature/main-dashboard
         setStep('processing');
         try {
           await api.post(`/orders/${order.id}/simulate-pay`);
@@ -500,6 +550,7 @@ export default function CheckoutPage() {
       {/* STEP 1 — info + summary */}
       {step === 'info' && (
         <form onSubmit={handleCreateOrder} className="space-y-6">
+<<<<<<< HEAD
           {/* Service-period pickup time chosen on the order/cart page. This is
               the authoritative selection; the legacy same-day slot cards below
               only render for locations with no service periods configured. */}
@@ -514,6 +565,9 @@ export default function CheckoutPage() {
           )}
 
           {!pickupTime && schedule.mode === 'closed' && (
+=======
+          {schedule.mode === 'closed' && (
+>>>>>>> origin/feature/main-dashboard
             <div className="flex items-start gap-3 rounded-lg border border-error/30 bg-red-50 p-4">
               <AlertTriangle size={18} className="mt-0.5 shrink-0 text-error" />
               <div>
@@ -525,7 +579,11 @@ export default function CheckoutPage() {
             </div>
           )}
 
+<<<<<<< HEAD
           {!pickupTime && schedule.mode === 'before_open' && (
+=======
+          {schedule.mode === 'before_open' && (
+>>>>>>> origin/feature/main-dashboard
             <Card>
               <div className="mb-2 flex items-center gap-2">
                 <CalendarClock size={18} className="text-primary" />
@@ -558,7 +616,11 @@ export default function CheckoutPage() {
             </Card>
           )}
 
+<<<<<<< HEAD
           {!pickupTime && schedule.mode === 'open' && schedule.slots.length > 0 && (
+=======
+          {schedule.mode === 'open' && schedule.slots.length > 0 && (
+>>>>>>> origin/feature/main-dashboard
             <Card>
               <div className="mb-2 flex items-center gap-2">
                 <CalendarClock size={18} className="text-primary" />
@@ -739,6 +801,7 @@ export default function CheckoutPage() {
             </div>
           </Card>
 
+<<<<<<< HEAD
           {/* Keys present but unusable — surfaced up front, not on click, and
               never simulated. */}
           {stripeConfigError && (
@@ -753,6 +816,9 @@ export default function CheckoutPage() {
 
           {/* Genuinely no Stripe configured: the legitimate simulated path. */}
           {!stripeConfigured && stripeConfigured !== null && !stripeConfigError && (
+=======
+          {!stripeConfigured && stripeConfigured !== null && (
+>>>>>>> origin/feature/main-dashboard
             <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
               <AlertTriangle size={16} className="shrink-0 text-amber-600" />
               <p className="text-sm text-amber-700">Dev mode — payment will be simulated. Configure Stripe keys for real payments.</p>
@@ -814,7 +880,11 @@ export default function CheckoutPage() {
               <ShieldCheck size={14} className="shrink-0 text-green-600" />
               <p className="text-xs text-green-700">Secured by Stripe. Your payment details never touch our servers.</p>
             </div>
+<<<<<<< HEAD
             <Elements stripe={stripePromise} options={elementsOptions}>
+=======
+            <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: 'stripe' } }}>
+>>>>>>> origin/feature/main-dashboard
               <StripePaymentForm
                 orderId={orderId ?? 0}
                 trackingCode={trackingCode ?? ''}

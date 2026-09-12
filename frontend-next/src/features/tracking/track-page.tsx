@@ -158,6 +158,7 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
     fetchOrder();
   }, [fetchOrder]);
 
+<<<<<<< HEAD
   // Live status comes from the socket; this poll is only a fallback for a
   // dropped connection, so it runs slowly. It was 15s, which meant every
   // customer watching an order hit the API four times a minute on top of
@@ -187,6 +188,18 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
     order
       ? { order_paid: onOrderEvent, order_updated: onOrderEvent, order_ready: onOrderEvent }
       : undefined,
+=======
+  // Live status: poll every 15s + react to kitchen socket events.
+  useEffect(() => {
+    const interval = setInterval(fetchOrder, 15000);
+    return () => clearInterval(interval);
+  }, [fetchOrder]);
+
+  useSocket(
+    '/kitchen',
+    order ? { location_id: order.location_id } : undefined,
+    order ? { order_paid: fetchOrder, order_updated: fetchOrder, order_ready: fetchOrder } : undefined,
+>>>>>>> origin/feature/main-dashboard
   );
 
   if (loading) {

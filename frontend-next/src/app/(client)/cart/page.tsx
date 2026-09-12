@@ -1,5 +1,6 @@
 'use client';
 
+<<<<<<< HEAD
 import { useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -10,6 +11,13 @@ import { useLang } from '@/providers/lang-provider';
 import { useCart } from '@/providers/cart-provider';
 import { usePickup } from '@/providers/pickup-provider';
 import PickupPicker from '@/features/service-period/pickup-picker';
+=======
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { Trash2, Minus, Plus, ArrowLeft, ArrowRight, ShoppingBag } from 'lucide-react';
+import { useLang } from '@/providers/lang-provider';
+import { useCart } from '@/providers/cart-provider';
+>>>>>>> origin/feature/main-dashboard
 import { formatCurrency } from '@/lib/utils/format';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
@@ -17,6 +25,7 @@ import EmptyState from '@/components/ui/empty-state';
 
 export default function CartPage() {
   const { t } = useLang();
+<<<<<<< HEAD
   const { items, total, itemCount, updateQuantity, removeItem, locationId } = useCart();
   const { unavailable, isUnavailable, revalidate, validating } = usePickup();
   const router = useRouter();
@@ -30,6 +39,11 @@ export default function CartPage() {
 
   const hasUnavailable = unavailable.length > 0;
 
+=======
+  const { items, total, itemCount, updateQuantity, removeItem } = useCart();
+  const router = useRouter();
+
+>>>>>>> origin/feature/main-dashboard
   if (items.length === 0) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-10">
@@ -59,6 +73,7 @@ export default function CartPage() {
         </span>
       </div>
 
+<<<<<<< HEAD
       {/* Pickup time drives availability, so it is changeable from here too. */}
       {locationId && (
         <div className="mb-4">
@@ -91,6 +106,11 @@ export default function CartPage() {
               isUnavailable(entry.item.id) ? 'border-warning bg-warning/5' : ''
             }`}
           >
+=======
+      <div className="space-y-3">
+        {items.map((entry) => (
+          <Card key={entry.key} className="flex items-start gap-4">
+>>>>>>> origin/feature/main-dashboard
             <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-primary-light to-primary/10">
               {entry.item.image_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -101,12 +121,15 @@ export default function CartPage() {
             </div>
             <div className="min-w-0 flex-1">
               <h3 className="truncate font-medium text-text">{entry.item.name}</h3>
+<<<<<<< HEAD
               {isUnavailable(entry.item.id) && (
                 <p className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-warning">
                   <AlertTriangle size={12} aria-hidden="true" />
                   Not available at the selected pickup time
                 </p>
               )}
+=======
+>>>>>>> origin/feature/main-dashboard
               {entry.options.length > 0 && (
                 <p className="mt-0.5 text-xs text-text-secondary">
                   {entry.options.map((o) => o.name).filter(Boolean).join(', ')}
@@ -152,6 +175,7 @@ export default function CartPage() {
           <span className="text-text">{t.cart.total}</span>
           <span className="text-primary-dark">{formatCurrency(total)}</span>
         </div>
+<<<<<<< HEAD
         {/* Checkout is blocked while flagged items remain — the order would be
             rejected by sp_order_create anyway, so fail here with a reason. */}
         {hasUnavailable ? (
@@ -172,6 +196,14 @@ export default function CartPage() {
             </Button>
           </Link>
         )}
+=======
+        <Link href="/checkout">
+          <Button variant="accent" size="lg" className="mt-4 w-full">
+            {t.cart.checkout}
+            <ArrowRight size={18} />
+          </Button>
+        </Link>
+>>>>>>> origin/feature/main-dashboard
       </Card>
     </div>
   );

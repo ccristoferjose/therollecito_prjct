@@ -6,7 +6,10 @@ import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard, UtensilsCrossed, MapPin, Users, Tag, LogOut, ChefHat, ClipboardList,
+<<<<<<< HEAD
   Contact, Clock,
+=======
+>>>>>>> origin/feature/main-dashboard
 } from 'lucide-react';
 import { useStaffAuth } from '@/providers/staff-auth-provider';
 import { useFetch } from '@/lib/hooks/use-fetch';
@@ -25,11 +28,15 @@ const adminNav: NavItem[] = [
   { to: '/staff/admin', icon: LayoutDashboard, label: 'Dashboard', end: true },
   { to: '/staff/admin/menu', icon: UtensilsCrossed, label: 'Menu' },
   { to: '/staff/admin/locations', icon: MapPin, label: 'Locations' },
+<<<<<<< HEAD
   // Which menu is served when, per location.
   { to: '/staff/admin/service-periods', icon: Clock, label: 'Service periods' },
   { to: '/staff/admin/users', icon: Users, label: 'Users' },
   // Staff accounts live under Users; Clients is the customer directory.
   { to: '/staff/admin/clients', icon: Contact, label: 'Clients' },
+=======
+  { to: '/staff/admin/users', icon: Users, label: 'Users' },
+>>>>>>> origin/feature/main-dashboard
   { to: '/staff/admin/promotions', icon: Tag, label: 'Promotions' },
 ];
 
