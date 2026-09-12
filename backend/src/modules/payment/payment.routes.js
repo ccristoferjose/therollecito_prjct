@@ -39,9 +39,41 @@ router.post(
 router.get('/status', (_req, res) => {
   const stripe = require('../../config/stripe');
   const env = require('../../config/env');
+
+  // Distinguish "Stripe is intentionally off" from "Stripe is set up wrong".
+  //
+  // Those need OPPOSITE handling. No keys at all is a legitimate local setup and
+  // should fall back to simulated payment. But keys that are present and broken
+  // must NOT simulate: silently inventing a paid order hides the misconfiguration
+  // and produces fake revenue. That case reports config_error so checkout can
+  // refuse and say why.
+  //
+  // The failure this catches: pasting a whsec_... webhook secret into
+  // STRIPE_PUBLISHABLE_KEY. loadStripe() still resolves a stripe object, so the
+  // Pay button enables, but the PaymentElement can never mount — surfacing only
+  // on click as "elements should have a mounted Payment Element".
+  const publishableKey = env.stripe.publishableKey || null;
+  const keyLooksValid = /^pk_(test|live)_/.test(publishableKey || '');
+
+  let configError = null;
+  if (stripe && !publishableKey) {
+    configError =
+      'STRIPE_SECRET_KEY is set but STRIPE_PUBLISHABLE_KEY is missing. Stripe cannot be used from the browser.';
+  } else if (stripe && !keyLooksValid) {
+    configError =
+      `STRIPE_PUBLISHABLE_KEY must start with pk_test_ or pk_live_ (got "${publishableKey.slice(0, 8)}..."). ` +
+      'The webhook secret and the publishable key are easy to transpose in backend/.env.';
+  }
+
+  if (configError) console.error(`[payments] ${configError}`);
+
   res.json({
-    stripe_configured: !!stripe,
-    publishable_key: env.stripe.publishableKey || null,
+    // True only when Stripe is genuinely usable end to end.
+    stripe_configured: !!stripe && keyLooksValid,
+    publishable_key: keyLooksValid ? publishableKey : null,
+    // Present ONLY when Stripe was meant to work but cannot. The client must
+    // block checkout on this rather than falling back to simulation.
+    config_error: configError,
     fee_percent: env.stripe.feePercent,
     fee_fixed: env.stripe.feeFixed,
   });

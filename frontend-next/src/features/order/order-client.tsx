@@ -3,10 +3,13 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ShoppingBag, Plus, MapPin, RefreshCw } from 'lucide-react';
+import { ShoppingBag, Plus, MapPin, RefreshCw, Clock } from 'lucide-react';
 import { useLang } from '@/providers/lang-provider';
 import { useFetch } from '@/lib/hooks/use-fetch';
 import { useCart } from '@/providers/cart-provider';
+import { usePickup } from '@/providers/pickup-provider';
+import PickupPicker from '@/features/service-period/pickup-picker';
+import type { PickupMenuData } from '@/features/service-period/types';
 import { formatCurrency } from '@/lib/utils/format';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
@@ -14,7 +17,7 @@ import Badge from '@/components/ui/badge';
 import Modal from '@/components/ui/modal';
 import Spinner from '@/components/ui/spinner';
 import EmptyState from '@/components/ui/empty-state';
-import type { Location, MenuData, MenuItem, MenuItemOptionValue } from '@/lib/types';
+import type { Location, MenuItem, MenuItemOptionValue } from '@/lib/types';
 
 const ORDER_PATH = '/order';
 
@@ -26,6 +29,7 @@ export default function OrderClient() {
 
   const { data: locations } = useFetch<Location[]>('/locations');
   const { addItem, itemCount, total, setLocation, locationId: cartLocationId } = useCart();
+  const { pickupTime } = usePickup();
 
   const [pendingLocationId, setPendingLocationId] = useState<number | null>(null);
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
@@ -56,13 +60,29 @@ export default function OrderClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const { data: menuData, loading } = useFetch<MenuData>(
-    effectiveLocationId ? `/menu/location/${effectiveLocationId}` : null,
+  // The SELECTED PICKUP TIME — not the current clock — decides which service
+  // period applies and therefore which menu loads. Omitting it resolves against
+  // "as soon as possible". A closed time returns 400 with a displayable message.
+  const { data: menuData, loading, error: menuError } = useFetch<PickupMenuData>(
+    effectiveLocationId
+      ? `/menu/location/${effectiveLocationId}/pickup${
+          pickupTime ? `?pickupTime=${encodeURIComponent(pickupTime)}` : ''
+        }`
+      : null,
   );
 
+  // Keep the selected category valid for the menu currently loaded.
+  //
+  // Only initialising when activeCategory is null was wrong once the menu could
+  // change underneath it: changing the pickup time swaps to another service
+  // period's menu, whose category ids are completely different. The stale id
+  // then matched no item, so the page rendered the new menu's category chips
+  // with none selected and "No items available" below them.
   useEffect(() => {
-    if (menuData?.categories?.length && !activeCategory) {
-      setActiveCategory(menuData.categories[0].id);
+    const cats = menuData?.categories;
+    if (!cats?.length) return;
+    if (!cats.some((c) => c.id === activeCategory)) {
+      setActiveCategory(cats[0].id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [menuData]);
@@ -185,6 +205,26 @@ export default function OrderClient() {
           </Link>
         )}
       </div>
+
+      {/* Selected pickup time sits directly above the menu, because changing
+          it can change what is available. */}
+      {effectiveLocationId && (
+        <div className="mb-6">
+          <PickupPicker
+            locationId={effectiveLocationId}
+            menuName={menuData?.period?.menu_name}
+          />
+        </div>
+      )}
+
+      {/* Nothing bookable at the chosen time — show why instead of an empty menu. */}
+      {menuError && (
+        <EmptyState
+          icon={Clock}
+          title="No menu at that pickup time"
+          description={menuError}
+        />
+      )}
 
       {categories.length > 0 && (
         <div className="mb-6 flex gap-2 overflow-x-auto pb-3">

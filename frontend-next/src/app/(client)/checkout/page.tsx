@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, CreditCard, Clock, User, CheckCircle, MapPin, ShieldCheck, AlertTriangle, Tag, X, CalendarClock } from 'lucide-react';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
@@ -12,6 +12,9 @@ import { useFetch } from '@/lib/hooks/use-fetch';
 import { formatCurrency, formatOrderNumber } from '@/lib/utils/format';
 import { api, ApiError } from '@/lib/api/client';
 import { addGuestOrder } from '@/lib/utils/guest-orders';
+import { validateCart } from '@/features/service-period/queries';
+import { usePickup } from '@/providers/pickup-provider';
+import PickupPicker from '@/features/service-period/pickup-picker';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import Input from '@/components/ui/input';
@@ -79,9 +82,38 @@ function buildLocalDateTime(slotMinutes: number, now = new Date()): string {
   return `${yyyy}-${mm}-${dd}T${minutesToHHMM(slotMinutes)}:00`;
 }
 
+/**
+ * Stripe instances are cached per publishable key at MODULE scope.
+ *
+ * Stripe's own guidance is to call loadStripe outside render so the object is
+ * never re-created. Calling it inside an effect breaks that: React StrictMode
+ * (enabled in next.config.ts) invokes effects twice in development, so the
+ * fetch below ran twice and produced TWO different Stripe instances. <Elements>
+ * binds to the first and ignores later changes to its `stripe` prop, which can
+ * leave the mounted PaymentElement associated with a different instance than
+ * the one confirmPayment() is called on — surfacing only at pay time as
+ * "elements should have a mounted Payment Element or Express Checkout Element".
+ *
+ * Keyed by publishable key so switching keys (test -> live) still works.
+ */
+const stripeInstances = new Map<string, Promise<Stripe | null>>();
+function getStripe(publishableKey: string): Promise<Stripe | null> {
+  let instance = stripeInstances.get(publishableKey);
+  if (!instance) {
+    instance = loadStripe(publishableKey);
+    stripeInstances.set(publishableKey, instance);
+  }
+  return instance;
+}
+
+/** Stable identity — a new object each render makes Elements re-run update(). */
+const PAYMENT_ELEMENT_OPTIONS = { layout: 'tabs' } as const;
+
 interface PaymentStatus {
   stripe_configured: boolean;
   publishable_key?: string | null;
+  /** Set when Stripe was MEANT to work but is misconfigured. Never simulate then. */
+  config_error?: string | null;
   fee_percent?: number;
   fee_fixed?: number;
 }
@@ -153,7 +185,7 @@ function StripePaymentForm({
 
   return (
     <form onSubmit={handlePay} className="space-y-4">
-      <PaymentElement options={{ layout: 'tabs' }} />
+      <PaymentElement options={PAYMENT_ELEMENT_OPTIONS} />
       {payError && (
         <div className="flex items-center gap-2 rounded-lg border border-error/20 bg-red-50 p-3 text-sm text-error">
           <AlertTriangle size={14} /> {payError}
@@ -195,6 +227,9 @@ export default function CheckoutPage() {
   const [displayNumber, setDisplayNumber] = useState<number | null>(null);
   const [trackingCode, setTrackingCode] = useState<string | null>(null);
   const [stripeConfigured, setStripeConfigured] = useState<boolean | null>(null);
+  // Non-null means Stripe keys are present but unusable — checkout must refuse
+  // rather than quietly fall back to a simulated payment.
+  const [stripeConfigError, setStripeConfigError] = useState<string | null>(null);
   const [step, setStep] = useState<'info' | 'payment' | 'processing'>('info');
 
   const [promoInput, setPromoInput] = useState('');
@@ -210,6 +245,10 @@ export default function CheckoutPage() {
   }, []);
   const schedule = computeScheduleState(currentLocation, new Date());
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
+  // Pickup time carried over from the order/cart pages, resolved against the
+  // location's service periods. When present it supersedes the legacy
+  // same-day slot picker below.
+  const { pickupTime } = usePickup();
 
   useEffect(() => {
     if (schedule.mode === 'before_open') setSelectedSlot(schedule.slots[0]?.minutes ?? null);
@@ -289,13 +328,22 @@ export default function CheckoutPage() {
       .get<PaymentStatus>('/payments/status')
       .then((data) => {
         setStripeConfigured(data.stripe_configured);
+        setStripeConfigError(data.config_error || null);
         if (data.stripe_configured && data.publishable_key) {
-          setStripePromise(loadStripe(data.publishable_key));
+          setStripePromise(getStripe(data.publishable_key));
         }
         setFeeRates({ percent: Number(data.fee_percent) || 0, fixed: Number(data.fee_fixed) || 0 });
       })
       .catch(() => setStripeConfigured(false));
   }, []);
+
+  // Stable options identity. A fresh object each render makes <Elements> call
+  // elements.update() on every parent re-render, which is churn at best and a
+  // source of element-lifecycle surprises at worst.
+  const elementsOptions = useMemo(
+    () => ({ clientSecret: clientSecret ?? '', appearance: { theme: 'stripe' as const } }),
+    [clientSecret],
+  );
 
   function completeOrder(code?: string) {
     const finalCode = code || trackingCode;
@@ -312,18 +360,56 @@ export default function CheckoutPage() {
     setError(null);
 
     try {
-      if (schedule.mode === 'closed') {
-        setError('This location is closed for the day. Please order again tomorrow.');
-        setLoading(false);
-        return;
-      }
-      if (schedule.mode === 'before_open' && selectedSlot == null) {
-        setError('Please pick a pickup time.');
-        setLoading(false);
-        return;
+      // A pickup time chosen on the order/cart pages is authoritative — it was
+      // resolved against the location's service periods, which may span days
+      // the legacy same-day window knows nothing about. The legacy slot checks
+      // only apply when no service-period time was selected.
+      if (!pickupTime) {
+        if (schedule.mode === 'closed') {
+          setError('This location is closed for the day. Please order again tomorrow.');
+          setLoading(false);
+          return;
+        }
+        if (schedule.mode === 'before_open' && selectedSlot == null) {
+          setError('Please pick a pickup time.');
+          setLoading(false);
+          return;
+        }
       }
 
-      const pickupTimeStr = selectedSlot != null ? buildLocalDateTime(selectedSlot) : null;
+      const pickupTimeStr =
+        pickupTime ?? (selectedSlot != null ? buildLocalDateTime(selectedSlot) : null);
+
+      // Final server-side gate: re-resolve the service period for the pickup
+      // time actually being submitted and confirm every item is on that
+      // period's menu. The cart already flags this, but the pickup time or the
+      // menu can change between the cart and this click.
+      if (locationId) {
+        try {
+          const stale = await validateCart(
+            locationId,
+            pickupTimeStr,
+            Array.from(new Set(items.map((entry) => entry.item.id))),
+          );
+          if (stale.length > 0) {
+            setError(
+              `Some items are not available at the selected pickup time: ${stale
+                .map((u) => u.item_name)
+                .join(', ')}. Update your cart or choose another time.`,
+            );
+            setLoading(false);
+            return;
+          }
+        } catch (err) {
+          // A closed pickup time makes this 400 with a displayable reason.
+          setError(
+            err instanceof ApiError ? err.message : 'Could not verify availability for that pickup time.',
+          );
+          setLoading(false);
+          return;
+        }
+      }
+
       const order = await api.post<Order>('/orders', {
         location_id: locationId,
         user_id: dbUser?.id || null,
@@ -355,7 +441,13 @@ export default function CheckoutPage() {
         const intent = await api.post<{ client_secret: string }>('/payments/create-intent', { order_id: order.id });
         setClientSecret(intent.client_secret);
         setStep('payment');
+      } else if (stripeConfigError) {
+        // Keys are present but broken. Simulating here would invent a paid order
+        // and bury the real problem, so stop and say exactly what is wrong.
+        setError(`Stripe is misconfigured, so payment cannot be taken. ${stripeConfigError}`);
+        setStep('info');
       } else {
+        // Genuinely no Stripe configured — the legitimate local-dev path.
         setStep('processing');
         try {
           await api.post(`/orders/${order.id}/simulate-pay`);
@@ -408,7 +500,20 @@ export default function CheckoutPage() {
       {/* STEP 1 — info + summary */}
       {step === 'info' && (
         <form onSubmit={handleCreateOrder} className="space-y-6">
-          {schedule.mode === 'closed' && (
+          {/* Service-period pickup time chosen on the order/cart page. This is
+              the authoritative selection; the legacy same-day slot cards below
+              only render for locations with no service periods configured. */}
+          {pickupTime && locationId && (
+            <Card>
+              <div className="mb-2 flex items-center gap-2">
+                <CalendarClock size={18} className="text-primary" />
+                <h2 className="font-semibold text-text">Pickup time</h2>
+              </div>
+              <PickupPicker locationId={locationId} />
+            </Card>
+          )}
+
+          {!pickupTime && schedule.mode === 'closed' && (
             <div className="flex items-start gap-3 rounded-lg border border-error/30 bg-red-50 p-4">
               <AlertTriangle size={18} className="mt-0.5 shrink-0 text-error" />
               <div>
@@ -420,7 +525,7 @@ export default function CheckoutPage() {
             </div>
           )}
 
-          {schedule.mode === 'before_open' && (
+          {!pickupTime && schedule.mode === 'before_open' && (
             <Card>
               <div className="mb-2 flex items-center gap-2">
                 <CalendarClock size={18} className="text-primary" />
@@ -453,7 +558,7 @@ export default function CheckoutPage() {
             </Card>
           )}
 
-          {schedule.mode === 'open' && schedule.slots.length > 0 && (
+          {!pickupTime && schedule.mode === 'open' && schedule.slots.length > 0 && (
             <Card>
               <div className="mb-2 flex items-center gap-2">
                 <CalendarClock size={18} className="text-primary" />
@@ -634,7 +739,20 @@ export default function CheckoutPage() {
             </div>
           </Card>
 
-          {!stripeConfigured && stripeConfigured !== null && (
+          {/* Keys present but unusable — surfaced up front, not on click, and
+              never simulated. */}
+          {stripeConfigError && (
+            <div className="flex items-start gap-2 rounded-lg border border-error bg-red-50 px-4 py-3">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-error" />
+              <div className="text-sm text-error">
+                <p className="font-semibold">Stripe is misconfigured — payment cannot be taken.</p>
+                <p className="mt-0.5">{stripeConfigError}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Genuinely no Stripe configured: the legitimate simulated path. */}
+          {!stripeConfigured && stripeConfigured !== null && !stripeConfigError && (
             <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
               <AlertTriangle size={16} className="shrink-0 text-amber-600" />
               <p className="text-sm text-amber-700">Dev mode — payment will be simulated. Configure Stripe keys for real payments.</p>
@@ -696,7 +814,7 @@ export default function CheckoutPage() {
               <ShieldCheck size={14} className="shrink-0 text-green-600" />
               <p className="text-xs text-green-700">Secured by Stripe. Your payment details never touch our servers.</p>
             </div>
-            <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: 'stripe' } }}>
+            <Elements stripe={stripePromise} options={elementsOptions}>
               <StripePaymentForm
                 orderId={orderId ?? 0}
                 trackingCode={trackingCode ?? ''}

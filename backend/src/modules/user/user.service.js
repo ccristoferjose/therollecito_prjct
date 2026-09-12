@@ -50,18 +50,23 @@ async function deleteStaff(userId) {
   await db.call('sp_staff_delete', [userId]);
 }
 
-// --- Clients directory (admin) -------------------------------------------
+
+// --- Clients directory (admin) ---------------------------------------------
+
+/** All client-role users with order aggregates. Optional free-text search. */
 async function listClients(search) {
   const result = await db.call('sp_client_list', [search || null]);
   return Array.isArray(result[0]) ? result[0] : result;
 }
 
+/** One client's profile + aggregates, or null when the id is not a client. */
 async function getClient(userId) {
   const result = await db.call('sp_client_get', [userId]);
   const rows = Array.isArray(result[0]) ? result[0] : result;
   return rows[0] || null;
 }
 
+/** That client's full order history. */
 async function getClientOrders(userId) {
   const result = await db.call('sp_order_list_by_user', [userId]);
   return Array.isArray(result[0]) ? result[0] : result;

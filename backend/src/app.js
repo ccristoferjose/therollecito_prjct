@@ -16,6 +16,7 @@ const locationRoutes = require('./modules/location/location.routes');
 const promotionRoutes = require('./modules/promotion/promotion.routes');
 const uploadRoutes = require('./modules/upload/upload.routes');
 const dashboardRoutes = require('./modules/dashboard/dashboard.routes');
+const servicePeriodRoutes = require('./modules/service-period/service-period.routes');
 
 const app = express();
 
@@ -40,6 +41,7 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/kitchen', kitchenRoutes);
 app.use('/api/menu', menuRoutes);
 app.use('/api/locations', locationRoutes);
+app.use('/api/service-periods', servicePeriodRoutes);
 app.use('/api/promotions', promotionRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/dashboard', dashboardRoutes);

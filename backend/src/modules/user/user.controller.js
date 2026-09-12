@@ -36,7 +36,7 @@ const deleteStaff = asyncHandler(async (req, res) => {
   res.status(204).end();
 });
 
-// --- Clients directory (admin) -------------------------------------------
+
 const listClients = asyncHandler(async (req, res) => {
   const clients = await userService.listClients(req.query.search);
   res.json(clients);

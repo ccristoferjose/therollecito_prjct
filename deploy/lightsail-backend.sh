@@ -9,6 +9,10 @@
 # Usage:
 #   ./deploy/lightsail-backend.sh              # Build + push + deploy
 #   ./deploy/lightsail-backend.sh --create     # First-time: create service + deploy
+#
+# This script does not use docker-compose.yml. That file is local dev only and
+# includes MinIO. Production env is read from exported variables or
+# backend/.env.production.
 # =============================================================================
 
 set -euo pipefail
@@ -88,14 +92,14 @@ info "Pushed image: ${IMAGE_URI}"
 # ---------------------------------------------------------------------------
 info "Deploying container..."
 
-# Production env source: an exported environment variable wins (GitHub Actions
-# injects these from repo secrets); otherwise fall back to backend/.env.production,
-# then backend/.env for local manual deploys.
+# Production env source: an exported environment variable wins; otherwise fall
+# back to backend/.env.production. Do not fall back to backend/.env because that
+# file is development-only and may contain MinIO/local settings.
 ENV_FILE=""
-for f in "${PROJECT_ROOT}/backend/.env.production" "${PROJECT_ROOT}/backend/.env"; do
+for f in "${PROJECT_ROOT}/backend/.env.production"; do
   if [ -f "$f" ]; then ENV_FILE="$f"; break; fi
 done
-[ -n "${ENV_FILE}" ] && info "Env fallback file: ${ENV_FILE}"
+[ -n "${ENV_FILE}" ] && info "Env file: ${ENV_FILE}"
 
 # getenv KEY → exported env var if set, else the value from ENV_FILE, else "".
 getenv() {
@@ -117,6 +121,29 @@ fileenv() {
 APP_AWS_KEY="${APP_AWS_ACCESS_KEY_ID:-$(fileenv AWS_ACCESS_KEY_ID)}"
 APP_AWS_SECRET="${APP_AWS_SECRET_ACCESS_KEY:-$(fileenv AWS_SECRET_ACCESS_KEY)}"
 APP_AWS_REGION_VAL="${APP_AWS_REGION:-$(fileenv AWS_REGION)}"
+S3_BUCKET_VAL="$(getenv S3_BUCKET)"
+S3_PUBLIC_URL_BASE_VAL="$(getenv S3_PUBLIC_URL_BASE)"
+S3_ENDPOINT_VAL="$(getenv S3_ENDPOINT)"
+
+if [ -z "${S3_BUCKET_VAL}" ]; then
+  error "Refusing production deploy: S3_BUCKET is required."
+fi
+
+if [ -n "${S3_ENDPOINT_VAL}" ]; then
+  error "Refusing production deploy: S3_ENDPOINT is set. Remove local MinIO endpoint config from production."
+fi
+
+case "${S3_PUBLIC_URL_BASE_VAL}" in
+  *localhost*|*127.0.0.1*|*minio*)
+    error "Refusing production deploy: S3_PUBLIC_URL_BASE points to a local/MinIO host."
+    ;;
+esac
+
+case "${S3_BUCKET_VAL}" in
+  the-rollecito-dev|menu-images)
+    error "Refusing production deploy: S3_BUCKET is a known local development bucket."
+    ;;
+esac
 
 # Build the container definition with jq so values (notably the quote-heavy
 # Firebase service-account JSON) are escaped correctly. Keys are only included
@@ -139,9 +166,8 @@ jq -n \
   --arg fee_pct    "$(getenv STRIPE_FEE_PERCENT)" \
   --arg fee_fix    "$(getenv STRIPE_FEE_FIXED)" \
   --arg cors       "$(getenv CORS_ORIGIN)" \
-  --arg tz         "$(getenv TZ)" \
-  --arg s3_bucket  "$(getenv S3_BUCKET)" \
-  --arg s3_url     "$(getenv S3_PUBLIC_URL_BASE)" \
+  --arg s3_bucket  "${S3_BUCKET_VAL}" \
+  --arg s3_url     "${S3_PUBLIC_URL_BASE_VAL}" \
   --arg aws_region "${APP_AWS_REGION_VAL}" \
   --arg aws_key    "${APP_AWS_KEY}" \
   --arg aws_secret "${APP_AWS_SECRET}" \
