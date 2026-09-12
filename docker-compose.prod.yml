@@ -35,7 +35,7 @@ services:
     restart: unless-stopped
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     environment:
-      TZ: ${TZ:-America/Mexico_City}
+      TZ: ${TZ:-America/Los_Angeles}
       MYSQL_ROOT_PASSWORD: admin123
       MYSQL_DATABASE: restaurant_ordering
     volumes:
@@ -65,7 +65,7 @@ services:
       - ./firebase-service-account.json:/app/firebase-service-account.json:ro
       - ./backend/database:/app/database:ro
     environment:
-      TZ: ${TZ:-America/Mexico_City}
+      TZ: ${TZ:-America/Los_Angeles}
       DB_HOST: db
       DB_PORT: 3306
       DB_USER: root
