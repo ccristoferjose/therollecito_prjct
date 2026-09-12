@@ -333,6 +333,9 @@ BEGIN
   DECLARE v_status_id       INT UNSIGNED;
   DECLARE v_order_id        INT UNSIGNED;
   DECLARE v_display_number  INT UNSIGNED;
+  DECLARE v_period_id       INT UNSIGNED DEFAULT NULL;
+  DECLARE v_has_periods     TINYINT(1)   DEFAULT 0;
+  DECLARE v_when            DATETIME;
 
   DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; RESIGNAL; END;
 
@@ -346,29 +349,74 @@ BEGIN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Location is not currently active.';
   END IF;
 
-  -- pickup_time validation: must be today, within service hours, not in the past.
-  -- Only enforced when the location has hours configured (NULL = always-on).
-  IF p_pickup_time IS NOT NULL THEN
-    IF DATE(p_pickup_time) <> CURDATE() THEN
-      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Scheduled pickup must be later today.';
-    END IF;
-    IF p_pickup_time < NOW() THEN
+  -- pickup_time validation.
+  --
+  -- Two regimes, chosen by whether this location has service periods configured
+  -- (migration 005). Locations without them keep the original behaviour exactly,
+  -- so this change is backward compatible for any location not yet migrated.
+  SET v_when = COALESCE(p_pickup_time, NOW());
+
+  SELECT EXISTS(
+           SELECT 1 FROM service_period
+            WHERE location_id = p_location_id AND is_active = 1
+         )
+    INTO v_has_periods;
+
+  IF v_has_periods = 1 THEN
+    -- SERVICE-PERIOD REGIME. The pickup time decides which period applies, and
+    -- the period's own weekday schedule decides whether it is valid. Pickup is
+    -- NOT restricted to today: advance orders for a later date are the point of
+    -- this model. Prep time is enforced as minimum lead time.
+    IF p_pickup_time IS NOT NULL AND p_pickup_time < NOW() THEN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Scheduled pickup time is in the past.';
     END IF;
-    IF v_open_time IS NOT NULL THEN
-      SET v_pickup_time_t = TIME(p_pickup_time);
-      IF v_pickup_time_t < v_open_time OR v_pickup_time_t > v_close_time THEN
+
+    SELECT sp.id INTO v_period_id
+      FROM service_period sp
+      JOIN service_period_schedule s
+        ON s.service_period_id = sp.id
+       AND s.day_of_week       = DAYOFWEEK(v_when)
+     WHERE sp.location_id = p_location_id
+       AND sp.is_active   = 1
+       AND TIME(v_when)  >= s.start_time
+       AND TIME(v_when)  <= s.end_time
+       AND v_when >= (NOW() + INTERVAL sp.prep_time_minutes MINUTE)
+     ORDER BY sp.sort_order, sp.id
+     LIMIT 1;
+
+    IF v_period_id IS NULL THEN
+      IF p_pickup_time IS NULL THEN
         SIGNAL SQLSTATE '45000'
-          SET MESSAGE_TEXT = 'Scheduled pickup time is outside the location''s service hours.';
+          SET MESSAGE_TEXT = 'Location is closed. Schedule a pickup time within service hours.';
+      ELSE
+        SIGNAL SQLSTATE '45000'
+          SET MESSAGE_TEXT = 'No menu is available at the selected pickup time.';
       END IF;
     END IF;
   ELSE
-    -- No pickup_time supplied. If hours are configured, the current time must be
-    -- within them — otherwise the customer needs to schedule.
-    IF v_open_time IS NOT NULL AND
-       (CURTIME() < v_open_time OR CURTIME() > v_close_time) THEN
-      SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'Location is closed. Schedule a pickup time within service hours.';
+    -- LEGACY REGIME — unchanged. Single open/close window, pickup must be today.
+    IF p_pickup_time IS NOT NULL THEN
+      IF DATE(p_pickup_time) <> CURDATE() THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Scheduled pickup must be later today.';
+      END IF;
+      IF p_pickup_time < NOW() THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Scheduled pickup time is in the past.';
+      END IF;
+      IF v_open_time IS NOT NULL THEN
+        SET v_pickup_time_t = TIME(p_pickup_time);
+        IF v_pickup_time_t < v_open_time OR v_pickup_time_t > v_close_time THEN
+          SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Scheduled pickup time is outside the location''s service hours.';
+        END IF;
+      END IF;
+    ELSE
+      -- No pickup_time supplied. If hours are configured, the current time must be
+      -- within them — otherwise the customer needs to schedule.
+      IF v_open_time IS NOT NULL AND
+         (CURTIME() < v_open_time OR CURTIME() > v_close_time) THEN
+        SIGNAL SQLSTATE '45000'
+          SET MESSAGE_TEXT = 'Location is closed. Schedule a pickup time within service hours.';
+      END IF;
     END IF;
   END IF;
 
@@ -398,12 +446,12 @@ BEGIN
 
   SET @tracking = UUID();
   INSERT INTO `order` (
-    location_id, user_id, status_id, tracking_code, display_number,
-    guest_name, guest_phone, pickup_time, notes
+    location_id, service_period_id, user_id, status_id, tracking_code,
+    display_number, guest_name, guest_phone, pickup_time, notes
   )
   VALUES (
-    p_location_id, p_user_id, v_status_id, @tracking, v_display_number,
-    p_guest_name, p_guest_phone, p_pickup_time, p_notes
+    p_location_id, v_period_id, p_user_id, v_status_id, @tracking,
+    v_display_number, p_guest_name, p_guest_phone, p_pickup_time, p_notes
   );
   SET v_order_id = LAST_INSERT_ID();
   COMMIT;
@@ -2027,6 +2075,519 @@ BEGIN
     (SELECT COUNT(*) FROM location WHERE is_active = 1) AS active_locations,
     (SELECT COUNT(*) FROM location) AS total_locations,
     (SELECT COUNT(*) FROM `user`) AS total_users;
+END //
+
+
+-- #############################################################################
+-- CLIENTS DIRECTORY
+--
+-- Admin-facing view of everyone with the 'client' role, with order aggregates.
+-- total_spent counts only orders that actually represent revenue — CREATED and
+-- CANCELED are excluded so an abandoned checkout never inflates a client's
+-- lifetime value.
+-- #############################################################################
+
+DROP PROCEDURE IF EXISTS sp_client_list //
+CREATE PROCEDURE sp_client_list(IN p_search VARCHAR(255))
+BEGIN
+  SELECT u.id, u.email, u.first_name, u.last_name, u.phone,
+         u.firebase_uid, u.is_active, u.created_at,
+         COUNT(DISTINCT o.id) AS order_count,
+         COALESCE(SUM(CASE WHEN os.name IN ('PAID','PREPARING','READY','COMPLETED')
+                           THEN o.total_amount ELSE 0 END), 0) AS total_spent,
+         MAX(o.created_at) AS last_order_at
+    FROM `user` u
+    JOIN role r ON r.id = u.role_id
+    LEFT JOIN `order` o ON o.user_id = u.id
+    LEFT JOIN order_status os ON os.id = o.status_id
+   WHERE r.name = 'client'
+     AND (p_search IS NULL OR p_search = ''
+          OR u.email LIKE CONCAT('%', p_search, '%')
+          OR u.first_name LIKE CONCAT('%', p_search, '%')
+          OR u.last_name LIKE CONCAT('%', p_search, '%')
+          OR u.phone LIKE CONCAT('%', p_search, '%')
+          OR CONCAT(u.first_name, ' ', u.last_name) LIKE CONCAT('%', p_search, '%'))
+   GROUP BY u.id, u.email, u.first_name, u.last_name, u.phone,
+            u.firebase_uid, u.is_active, u.created_at
+   -- Most recently active clients first; never-ordered clients sink to the end.
+   ORDER BY (MAX(o.created_at) IS NULL), MAX(o.created_at) DESC, u.created_at DESC;
+END //
+
+DROP PROCEDURE IF EXISTS sp_client_get //
+CREATE PROCEDURE sp_client_get(IN p_user_id INT UNSIGNED)
+BEGIN
+  SELECT u.id, u.email, u.first_name, u.last_name, u.phone,
+         u.firebase_uid, u.is_active, u.created_at,
+         COUNT(DISTINCT o.id) AS order_count,
+         COALESCE(SUM(CASE WHEN os.name IN ('PAID','PREPARING','READY','COMPLETED')
+                           THEN o.total_amount ELSE 0 END), 0) AS total_spent,
+         MAX(o.created_at) AS last_order_at
+    FROM `user` u
+    JOIN role r ON r.id = u.role_id
+    LEFT JOIN `order` o ON o.user_id = u.id
+    LEFT JOIN order_status os ON os.id = o.status_id
+   WHERE u.id = p_user_id AND r.name = 'client'
+   GROUP BY u.id, u.email, u.first_name, u.last_name, u.phone,
+            u.firebase_uid, u.is_active, u.created_at;
+END //
+
+
+-- #############################################################################
+-- SERVICE PERIODS (migration 005)
+--
+-- One physical location can serve different menus at different times of day.
+-- The pickup time the customer chooses — not the current clock time — is the
+-- source of truth for which period, and therefore which menu, applies.
+--
+-- Schedules are per weekday (service_period_schedule.day_of_week, MySQL
+-- DAYOFWEEK(): 1=Sun .. 7=Sat). No row for a day means closed that day.
+--
+-- prep_time_minutes is minimum lead time: a period is only offered if the
+-- pickup is at least that far in the future. This is what stops an 11:50
+-- customer ordering from a morning menu that closes at 12:00 when the kitchen
+-- needs 20 minutes — 12:10 falls outside morning, so afternoon resolves instead.
+-- #############################################################################
+
+-- Resolve the service period that applies to a given pickup time.
+-- Returns 0 or 1 row. Callers treat "no row" as "nothing available then".
+DROP PROCEDURE IF EXISTS sp_service_period_resolve //
+CREATE PROCEDURE sp_service_period_resolve(
+  IN p_location_id INT UNSIGNED,
+  IN p_pickup_time DATETIME
+)
+BEGIN
+  DECLARE v_when DATETIME;
+
+  -- A NULL pickup time means "as soon as possible": resolve against now.
+  SET v_when = COALESCE(p_pickup_time, NOW());
+
+  SELECT sp.id, sp.name, sp.menu_id, sp.prep_time_minutes,
+         s.day_of_week, s.start_time, s.end_time,
+         (NOW() + INTERVAL sp.prep_time_minutes MINUTE) AS earliest_pickup
+    FROM service_period sp
+    JOIN service_period_schedule s
+      ON s.service_period_id = sp.id
+     AND s.day_of_week       = DAYOFWEEK(v_when)
+   WHERE sp.location_id = p_location_id
+     AND sp.is_active   = 1
+     AND TIME(v_when)  >= s.start_time
+     AND TIME(v_when)  <= s.end_time
+     -- Enough lead time to actually cook it.
+     AND v_when >= (NOW() + INTERVAL sp.prep_time_minutes MINUTE)
+   ORDER BY sp.sort_order, sp.id
+   LIMIT 1;
+END //
+
+-- Every period bookable on a given DATE, with the earliest still-valid pickup
+-- for each. Drives the customer's pickup-time picker: a period whose window has
+-- already passed (once prep time is applied) simply does not come back.
+DROP PROCEDURE IF EXISTS sp_service_period_list_bookable //
+CREATE PROCEDURE sp_service_period_list_bookable(
+  IN p_location_id INT UNSIGNED,
+  IN p_date        DATE
+)
+BEGIN
+  DECLARE v_date DATE;
+  SET v_date = COALESCE(p_date, CURDATE());
+
+  SELECT sp.id, sp.name, sp.menu_id, sp.prep_time_minutes,
+         s.start_time, s.end_time,
+         -- On a future date the whole window is open; today it is clamped to
+         -- now + prep time.
+         GREATEST(
+           TIMESTAMP(v_date, s.start_time),
+           NOW() + INTERVAL sp.prep_time_minutes MINUTE
+         ) AS earliest_pickup,
+         TIMESTAMP(v_date, s.end_time) AS latest_pickup
+    FROM service_period sp
+    JOIN service_period_schedule s
+      ON s.service_period_id = sp.id
+     AND s.day_of_week       = DAYOFWEEK(v_date)
+   WHERE sp.location_id = p_location_id
+     AND sp.is_active   = 1
+     -- Drop periods whose window has already closed once prep time is applied.
+     AND TIMESTAMP(v_date, s.end_time) >= (NOW() + INTERVAL sp.prep_time_minutes MINUTE)
+   ORDER BY s.start_time, sp.sort_order, sp.id;
+END //
+
+-- The menu for a location AT A GIVEN PICKUP TIME.
+--
+-- Same five result sets and same shape as sp_menu_get_full, so the existing API
+-- mapping is reusable — but restricted to the resolved period's menu. Both
+-- filters compose: the period picks the menu, item_location still decides which
+-- items this location actually carries.
+DROP PROCEDURE IF EXISTS sp_menu_get_full_for_pickup //
+CREATE PROCEDURE sp_menu_get_full_for_pickup(
+  IN p_location_id INT UNSIGNED,
+  IN p_pickup_time DATETIME
+)
+BEGIN
+  DECLARE v_menu_id   INT UNSIGNED DEFAULT NULL;
+  DECLARE v_period_id INT UNSIGNED DEFAULT NULL;
+  DECLARE v_when      DATETIME;
+
+  SET v_when = COALESCE(p_pickup_time, NOW());
+
+  SELECT sp.id, sp.menu_id INTO v_period_id, v_menu_id
+    FROM service_period sp
+    JOIN service_period_schedule s
+      ON s.service_period_id = sp.id
+     AND s.day_of_week       = DAYOFWEEK(v_when)
+   WHERE sp.location_id = p_location_id
+     AND sp.is_active   = 1
+     AND TIME(v_when)  >= s.start_time
+     AND TIME(v_when)  <= s.end_time
+     AND v_when >= (NOW() + INTERVAL sp.prep_time_minutes MINUTE)
+   ORDER BY sp.sort_order, sp.id
+   LIMIT 1;
+
+  IF v_menu_id IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'No menu is available at the selected pickup time.';
+  END IF;
+
+  -- Result set 1: the resolved period (so the UI can label "Afternoon Menu").
+  SELECT sp.id, sp.name, sp.menu_id, sp.prep_time_minutes,
+         m.name AS menu_name
+    FROM service_period sp
+    JOIN menu m ON m.id = sp.menu_id
+   WHERE sp.id = v_period_id;
+
+  -- Membership resolves through menu_category (migration 006), NOT
+  -- category.menu_id, so a shared category such as Drinks can appear in both
+  -- the breakfast and lunch menus without duplicating its items. sort_order
+  -- comes from the join row, letting the same category sit in a different
+  -- position on each menu.
+
+  -- Result set 2: categories (only those with items at this location)
+  SELECT DISTINCT c.id, mc.menu_id, c.name, c.description, mc.sort_order
+    FROM menu_category mc
+    JOIN category c ON c.id = mc.category_id
+    JOIN menu m ON m.id = mc.menu_id
+    JOIN item i ON i.category_id = c.id
+    JOIN item_location il ON il.item_id = i.id AND il.location_id = p_location_id
+   WHERE m.is_active = 1 AND i.is_active = 1 AND mc.menu_id = v_menu_id
+   ORDER BY mc.sort_order, c.id;
+
+  -- Result set 3: items available at this location, in this period's menu
+  SELECT i.id, i.category_id, i.name, i.description, i.price,
+         i.image_url, i.sort_order
+    FROM item i
+    JOIN category c ON c.id = i.category_id
+    JOIN menu_category mc ON mc.category_id = c.id AND mc.menu_id = v_menu_id
+    JOIN menu m ON m.id = mc.menu_id
+    JOIN item_location il ON il.item_id = i.id AND il.location_id = p_location_id
+   WHERE m.is_active = 1 AND i.is_active = 1
+   ORDER BY mc.sort_order, c.id, i.sort_order, i.id;
+
+  -- Result set 4: options for those items
+  SELECT io.id, io.item_id, io.name, io.is_required, io.max_choices
+    FROM item_option io
+    JOIN item i ON i.id = io.item_id
+    JOIN category c ON c.id = i.category_id
+    JOIN menu_category mc ON mc.category_id = c.id AND mc.menu_id = v_menu_id
+    JOIN item_location il ON il.item_id = i.id AND il.location_id = p_location_id
+   WHERE i.is_active = 1;
+
+  -- Result set 5: option values
+  SELECT iov.id, iov.item_option_id, iov.name, iov.price_modifier
+    FROM item_option_value iov
+    JOIN item_option io ON io.id = iov.item_option_id
+    JOIN item i ON i.id = io.item_id
+    JOIN category c ON c.id = i.category_id
+    JOIN menu_category mc ON mc.category_id = c.id AND mc.menu_id = v_menu_id
+    JOIN item_location il ON il.item_id = i.id AND il.location_id = p_location_id
+   WHERE i.is_active = 1;
+END //
+
+-- Revalidate a set of item IDs against a pickup time. The cart calls this when
+-- the customer changes pickup time: it returns one row per item that is NOT
+-- available in the newly resolved period, so the UI can flag them instead of
+-- silently dropping them from the cart.
+DROP PROCEDURE IF EXISTS sp_cart_validate_for_pickup //
+CREATE PROCEDURE sp_cart_validate_for_pickup(
+  IN p_location_id INT UNSIGNED,
+  IN p_pickup_time DATETIME,
+  IN p_item_ids    TEXT   -- comma-separated item ids
+)
+BEGIN
+  DECLARE v_menu_id INT UNSIGNED DEFAULT NULL;
+  DECLARE v_when    DATETIME;
+
+  SET v_when = COALESCE(p_pickup_time, NOW());
+
+  SELECT sp.menu_id INTO v_menu_id
+    FROM service_period sp
+    JOIN service_period_schedule s
+      ON s.service_period_id = sp.id
+     AND s.day_of_week       = DAYOFWEEK(v_when)
+   WHERE sp.location_id = p_location_id
+     AND sp.is_active   = 1
+     AND TIME(v_when)  >= s.start_time
+     AND TIME(v_when)  <= s.end_time
+     AND v_when >= (NOW() + INTERVAL sp.prep_time_minutes MINUTE)
+   ORDER BY sp.sort_order, sp.id
+   LIMIT 1;
+
+  IF v_menu_id IS NULL THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'No menu is available at the selected pickup time.';
+  END IF;
+
+  -- Unavailable items: everything the caller listed that is not in the resolved
+  -- menu / not carried at this location / not active.
+  --
+  -- The CSV is expanded into rows and LEFT JOINed rather than filtered with
+  -- FIND_IN_SET over `item`, so an id that no longer exists at all (the item was
+  -- hard-deleted while it sat in someone's cart) still comes back as a flagged
+  -- row. Filtering would have dropped it silently, which is exactly the
+  -- behaviour the cart must avoid.
+  WITH RECURSIVE ids AS (
+    SELECT CAST(NULLIF(SUBSTRING_INDEX(p_item_ids, ',', 1), '') AS UNSIGNED) AS id,
+           CASE WHEN LOCATE(',', p_item_ids) > 0
+                THEN SUBSTRING(p_item_ids, LOCATE(',', p_item_ids) + 1)
+                ELSE '' END AS rest
+     WHERE p_item_ids IS NOT NULL AND p_item_ids <> ''
+    UNION ALL
+    SELECT CAST(NULLIF(SUBSTRING_INDEX(rest, ',', 1), '') AS UNSIGNED),
+           CASE WHEN LOCATE(',', rest) > 0
+                THEN SUBSTRING(rest, LOCATE(',', rest) + 1)
+                ELSE '' END
+      FROM ids
+     WHERE rest <> ''
+  )
+  SELECT ids.id AS item_id,
+         COALESCE(i.name, 'This item is no longer available') AS item_name
+    FROM ids
+    LEFT JOIN item i ON i.id = ids.id
+   WHERE ids.id IS NOT NULL
+     -- Membership via menu_category (006), matching sp_menu_get_full_for_pickup,
+     -- so a shared category's items validate in every menu it is attached to.
+     AND NOT EXISTS (
+           SELECT 1
+             FROM item i2
+             JOIN category c ON c.id = i2.category_id
+             JOIN menu_category mc
+               ON mc.category_id = c.id AND mc.menu_id = v_menu_id
+             JOIN menu m ON m.id = mc.menu_id
+             JOIN item_location il
+               ON il.item_id = i2.id AND il.location_id = p_location_id
+            WHERE i2.id        = ids.id
+              AND m.is_active  = 1
+              AND i2.is_active = 1
+         );
+END //
+
+-- ---- Menu <-> category membership (migration 006) ---------------------------
+--
+-- A category may belong to several menus, so one product can be sold in several
+-- service periods without duplicating its item row.
+
+-- Which menus a category is on, and which categories a menu contains.
+DROP PROCEDURE IF EXISTS sp_menu_category_list //
+CREATE PROCEDURE sp_menu_category_list()
+BEGIN
+  SELECT mc.menu_id, mc.category_id, mc.sort_order,
+         m.name AS menu_name, c.name AS category_name,
+         -- The category's original owning menu. Kept for reference; membership
+         -- is decided by this table, not by category.menu_id.
+         c.menu_id AS home_menu_id
+    FROM menu_category mc
+    JOIN menu m ON m.id = mc.menu_id
+    JOIN category c ON c.id = mc.category_id
+   ORDER BY mc.menu_id, mc.sort_order, c.id;
+END //
+
+DROP PROCEDURE IF EXISTS sp_menu_category_attach //
+CREATE PROCEDURE sp_menu_category_attach(
+  IN p_menu_id     INT UNSIGNED,
+  IN p_category_id INT UNSIGNED,
+  IN p_sort_order  INT UNSIGNED
+)
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM menu WHERE id = p_menu_id AND is_active = 1) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Menu not found or inactive.';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM category WHERE id = p_category_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Category not found.';
+  END IF;
+
+  INSERT INTO menu_category (menu_id, category_id, sort_order)
+  VALUES (p_menu_id, p_category_id,
+          COALESCE(p_sort_order,
+                   (SELECT sort_order FROM category WHERE id = p_category_id), 0))
+  ON DUPLICATE KEY UPDATE sort_order = VALUES(sort_order);
+END //
+
+DROP PROCEDURE IF EXISTS sp_menu_category_detach //
+CREATE PROCEDURE sp_menu_category_detach(
+  IN p_menu_id     INT UNSIGNED,
+  IN p_category_id INT UNSIGNED
+)
+BEGIN
+  -- Refuse to strand a category with no menu at all: its items would vanish
+  -- from every service period with no obvious cause.
+  IF (SELECT COUNT(*) FROM menu_category WHERE category_id = p_category_id) <= 1 THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'A category must stay on at least one menu. Attach it elsewhere before removing it here.';
+  END IF;
+
+  DELETE FROM menu_category
+   WHERE menu_id = p_menu_id AND category_id = p_category_id;
+END //
+
+
+-- ---- Admin CRUD -------------------------------------------------------------
+
+DROP PROCEDURE IF EXISTS sp_service_period_list_by_location //
+CREATE PROCEDURE sp_service_period_list_by_location(IN p_location_id INT UNSIGNED)
+BEGIN
+  SELECT sp.id, sp.location_id, sp.menu_id, m.name AS menu_name, sp.name,
+         sp.prep_time_minutes, sp.sort_order, sp.is_active, sp.created_at
+    FROM service_period sp
+    JOIN menu m ON m.id = sp.menu_id
+   WHERE sp.location_id = p_location_id
+   ORDER BY sp.sort_order, sp.id;
+
+  -- Second result set: every schedule row for those periods.
+  SELECT s.id, s.service_period_id, s.day_of_week, s.start_time, s.end_time
+    FROM service_period_schedule s
+    JOIN service_period sp ON sp.id = s.service_period_id
+   WHERE sp.location_id = p_location_id
+   ORDER BY s.service_period_id, s.day_of_week;
+END //
+
+DROP PROCEDURE IF EXISTS sp_service_period_create //
+CREATE PROCEDURE sp_service_period_create(
+  IN p_location_id       INT UNSIGNED,
+  IN p_menu_id           INT UNSIGNED,
+  IN p_name              VARCHAR(100),
+  IN p_prep_time_minutes SMALLINT UNSIGNED,
+  IN p_sort_order        INT UNSIGNED
+)
+BEGIN
+  IF p_name IS NULL OR CHAR_LENGTH(TRIM(p_name)) = 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Service period name is required.';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_location_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Location not found.';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM menu WHERE id = p_menu_id AND is_active = 1) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Menu not found or inactive.';
+  END IF;
+
+  INSERT INTO service_period
+    (location_id, menu_id, name, prep_time_minutes, sort_order, is_active)
+  VALUES
+    (p_location_id, p_menu_id, TRIM(p_name),
+     COALESCE(p_prep_time_minutes, 0), COALESCE(p_sort_order, 0), 1);
+
+  SELECT LAST_INSERT_ID() AS id;
+END //
+
+DROP PROCEDURE IF EXISTS sp_service_period_update //
+CREATE PROCEDURE sp_service_period_update(
+  IN p_id                INT UNSIGNED,
+  IN p_menu_id           INT UNSIGNED,
+  IN p_name              VARCHAR(100),
+  IN p_prep_time_minutes SMALLINT UNSIGNED,
+  IN p_sort_order        INT UNSIGNED,
+  IN p_is_active         TINYINT(1)
+)
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM service_period WHERE id = p_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Service period not found.';
+  END IF;
+  IF p_menu_id IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM menu WHERE id = p_menu_id AND is_active = 1) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Menu not found or inactive.';
+  END IF;
+
+  UPDATE service_period
+     SET menu_id           = COALESCE(p_menu_id, menu_id),
+         name              = COALESCE(NULLIF(TRIM(p_name), ''), name),
+         prep_time_minutes = COALESCE(p_prep_time_minutes, prep_time_minutes),
+         sort_order        = COALESCE(p_sort_order, sort_order),
+         is_active         = COALESCE(p_is_active, is_active)
+   WHERE id = p_id;
+END //
+
+-- Set (upsert) one weekday's hours for a period. Deleting a day's row is how a
+-- period is marked closed on that day — see sp_service_period_schedule_clear.
+DROP PROCEDURE IF EXISTS sp_service_period_schedule_set //
+CREATE PROCEDURE sp_service_period_schedule_set(
+  IN p_service_period_id INT UNSIGNED,
+  IN p_day_of_week       TINYINT UNSIGNED,
+  IN p_start_time        TIME,
+  IN p_end_time          TIME
+)
+BEGIN
+  DECLARE v_location_id INT UNSIGNED;
+
+  SELECT location_id INTO v_location_id
+    FROM service_period WHERE id = p_service_period_id LIMIT 1;
+  IF v_location_id IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Service period not found.';
+  END IF;
+  IF p_day_of_week < 1 OR p_day_of_week > 7 THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'day_of_week must be 1 (Sunday) through 7 (Saturday).';
+  END IF;
+  -- Overnight windows are not supported; model them as two periods.
+  IF p_end_time <= p_start_time THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'end_time must be after start_time.';
+  END IF;
+
+  -- Two active periods overlapping on the same weekday would make menu
+  -- resolution ambiguous, so reject it at write time.
+  IF EXISTS (
+    SELECT 1
+      FROM service_period_schedule s
+      JOIN service_period sp ON sp.id = s.service_period_id
+     WHERE sp.location_id        = v_location_id
+       AND sp.is_active          = 1
+       AND s.service_period_id  <> p_service_period_id
+       AND s.day_of_week         = p_day_of_week
+       AND s.start_time          < p_end_time
+       AND s.end_time            > p_start_time
+  ) THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'That window overlaps another service period at this location on the same day.';
+  END IF;
+
+  INSERT INTO service_period_schedule
+    (service_period_id, day_of_week, start_time, end_time)
+  VALUES
+    (p_service_period_id, p_day_of_week, p_start_time, p_end_time)
+  ON DUPLICATE KEY UPDATE
+    start_time = VALUES(start_time),
+    end_time   = VALUES(end_time);
+END //
+
+DROP PROCEDURE IF EXISTS sp_service_period_schedule_clear //
+CREATE PROCEDURE sp_service_period_schedule_clear(
+  IN p_service_period_id INT UNSIGNED,
+  IN p_day_of_week       TINYINT UNSIGNED
+)
+BEGIN
+  DELETE FROM service_period_schedule
+   WHERE service_period_id = p_service_period_id
+     AND day_of_week       = p_day_of_week;
+END //
+
+-- Deactivates rather than deletes when the period has order history, so
+-- historical orders keep resolving their service_period_id.
+DROP PROCEDURE IF EXISTS sp_service_period_delete //
+CREATE PROCEDURE sp_service_period_delete(IN p_id INT UNSIGNED)
+BEGIN
+  IF EXISTS (SELECT 1 FROM `order` WHERE service_period_id = p_id) THEN
+    UPDATE service_period SET is_active = 0 WHERE id = p_id;
+    SELECT 'deactivated' AS result;
+  ELSE
+    DELETE FROM service_period WHERE id = p_id;
+    SELECT 'deleted' AS result;
+  END IF;
 END //
 
 

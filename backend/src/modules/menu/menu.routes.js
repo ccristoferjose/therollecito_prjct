@@ -1,5 +1,5 @@
 const { Router } = require('express');
-const { body, param } = require('express-validator');
+const { body, param, query } = require('express-validator');
 const validateRequest = require('../../middleware/validateRequest');
 const requireAuth = require('../../middleware/requireAuth');
 const requireRole = require('../../middleware/requireRole');
@@ -12,6 +12,20 @@ router.get(
   '/location/:locationId',
   [param('locationId').isInt({ gt: 0 }), validateRequest],
   menuController.getFullMenu
+);
+
+// Public: menu for a location AT A PICKUP TIME (service-period aware).
+// Omitting pickupTime resolves against "now", matching the legacy behaviour of
+// the route above. Returns 400 when nothing is bookable at that time.
+router.get(
+  '/location/:locationId/pickup',
+  [
+    param('locationId').isInt({ gt: 0 }),
+    query('pickupTime').optional({ nullable: true, checkFalsy: true }).isISO8601()
+      .withMessage('pickupTime must be an ISO 8601 datetime.'),
+    validateRequest,
+  ],
+  menuController.getFullMenuForPickup
 );
 
 // Admin: get ALL menu items (for management — includes item_location data)
@@ -175,6 +189,43 @@ router.delete(
   requireRole('admin', 'manager'),
   [param('id').isInt({ gt: 0 }), validateRequest],
   menuController.deleteItemOptionValue
+);
+
+// --- Menu <-> category membership (migration 006) ---------------------------
+// Which categories each menu contains. A category on several menus lets one
+// product be sold in several service periods without duplicating the item.
+router.get(
+  '/categories/menus',
+  requireAuth,
+  requireRole('admin', 'manager'),
+  menuController.listMenuCategories
+);
+
+// Attach (or re-sort) a category on a menu.
+router.put(
+  '/:menuId/categories/:categoryId',
+  requireAuth,
+  requireRole('admin', 'manager'),
+  [
+    param('menuId').isInt({ gt: 0 }),
+    param('categoryId').isInt({ gt: 0 }),
+    body('sort_order').optional().isInt({ min: 0 }),
+    validateRequest,
+  ],
+  menuController.attachCategoryToMenu
+);
+
+// Remove a category from a menu. Rejected if it is the category's last menu.
+router.delete(
+  '/:menuId/categories/:categoryId',
+  requireAuth,
+  requireRole('admin', 'manager'),
+  [
+    param('menuId').isInt({ gt: 0 }),
+    param('categoryId').isInt({ gt: 0 }),
+    validateRequest,
+  ],
+  menuController.detachCategoryFromMenu
 );
 
 module.exports = router;

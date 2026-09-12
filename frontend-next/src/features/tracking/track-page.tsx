@@ -158,16 +158,35 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
     fetchOrder();
   }, [fetchOrder]);
 
-  // Live status: poll every 15s + react to kitchen socket events.
+  // Live status comes from the socket; this poll is only a fallback for a
+  // dropped connection, so it runs slowly. It was 15s, which meant every
+  // customer watching an order hit the API four times a minute on top of
+  // holding a socket — pure duplication of what the socket already delivers.
   useEffect(() => {
-    const interval = setInterval(fetchOrder, 15000);
+    const interval = setInterval(fetchOrder, 60000);
     return () => clearInterval(interval);
   }, [fetchOrder]);
+
+  // The /kitchen namespace rooms are per LOCATION, not per order, so this
+  // client receives an event for every order at the location. Refetching on
+  // all of them meant N customers x M orders refetches; only this order's
+  // events matter here.
+  const orderId = order?.id;
+  const onOrderEvent = useCallback(
+    (...args: unknown[]) => {
+      const payload = args[0] as { order_id?: number } | undefined;
+      // No id on the payload → fall back to refetching rather than miss an update.
+      if (payload?.order_id == null || payload.order_id === orderId) fetchOrder();
+    },
+    [orderId, fetchOrder],
+  );
 
   useSocket(
     '/kitchen',
     order ? { location_id: order.location_id } : undefined,
-    order ? { order_paid: fetchOrder, order_updated: fetchOrder, order_ready: fetchOrder } : undefined,
+    order
+      ? { order_paid: onOrderEvent, order_updated: onOrderEvent, order_ready: onOrderEvent }
+      : undefined,
   );
 
   if (loading) {
