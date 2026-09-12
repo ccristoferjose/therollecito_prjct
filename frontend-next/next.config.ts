@@ -23,7 +23,6 @@ const nextConfig: NextConfig = {
     ];
   },
   // Menu item images are served from S3 / the public URL base.
-<<<<<<< HEAD
   //
   // next/image refuses any host not listed here. In production that is the real
   // S3 bucket (covered by **.amazonaws.com) or a CloudFront domain. In local
@@ -63,12 +62,6 @@ const nextConfig: NextConfig = {
               pathname: '/**',
             },
           ]),
-=======
-  images: {
-    remotePatterns: [
-      { protocol: 'https', hostname: '**.amazonaws.com' },
-      { protocol: 'https', hostname: '**.cloudfront.net' },
->>>>>>> origin/feature/main-dashboard
     ],
   },
 };

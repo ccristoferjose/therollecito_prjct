@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 // ESLint flat config.
 //
 // Next 16 removed `next lint`, and eslint-config-next now ships native flat
@@ -29,21 +28,6 @@ const eslintConfig = [
       // major-version upgrade that touches the checkout and kitchen screens.
       'react-hooks/set-state-in-effect': 'warn',
     },
-=======
-import { dirname } from 'path';
-import { fileURLToPath } from 'url';
-import { FlatCompat } from '@eslint/eslintrc';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const compat = new FlatCompat({ baseDirectory: __dirname });
-
-const eslintConfig = [
-  ...compat.extends('next/core-web-vitals', 'next/typescript'),
-  {
-    ignores: ['.next/**', 'node_modules/**'],
->>>>>>> origin/feature/main-dashboard
   },
 ];
 
