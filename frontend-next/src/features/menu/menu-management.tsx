@@ -374,6 +374,29 @@ export default function MenuManagement() {
       {/* Category modal */}
       <Modal open={showCatModal} onClose={() => setShowCatModal(false)} title={editingCat ? 'Edit Category' : 'Add Category'}>
         <form onSubmit={handleSaveCat} className="space-y-4">
+          {/* Which menu the category belongs to. Only on create: a category's
+              home menu is fixed once set (sp_category_update takes no menu_id).
+              Without this the form silently used menus[0], so every category
+              landed on the first menu and a second menu could never be filled. */}
+          {!editingCat && (
+            <div className="space-y-1">
+              <label htmlFor="cat-menu" className="block text-sm font-medium text-text">Menu</label>
+              <select
+                id="cat-menu"
+                value={catForm.menuId}
+                onChange={(e) => setCatForm((p) => ({ ...p, menuId: e.target.value }))}
+                required
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                {menus.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+              <p className="text-xs text-text-secondary">
+                Show it on more menus later under Service periods &rarr; Menu composition.
+              </p>
+            </div>
+          )}
           <Input label="Name" value={catForm.name} onChange={(e) => setCatForm((p) => ({ ...p, name: e.target.value }))} required />
           <Input label="Description" value={catForm.description} onChange={(e) => setCatForm((p) => ({ ...p, description: e.target.value }))} />
           <Button type="submit" variant="primary" className="w-full" disabled={saving}>
