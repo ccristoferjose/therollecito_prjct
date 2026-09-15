@@ -43,7 +43,15 @@ export default function ServicePeriodManagement() {
   const { token } = useStaffAuth();
   const { data: locations, loading: locLoading } = useFetch<Location[]>('/locations/all', token);
   // sp_menu_get_all returns several result sets; only the menus list is needed.
-  const { data: menuData } = useFetch<{ menus: MenuSummary[] }>('/menu/all', token);
+  // Menu list for the period's menu selector.
+  //
+  // MenuComposition sits on this same page and can CREATE menus. It refreshes
+  // its own state, but this component's useFetch only runs on mount — so a menu
+  // created down there never appeared in the dropdown up here, and the period
+  // looked impossible to repoint. Refetched whenever a modal opens (below) so
+  // the list is always current without needing a page reload.
+  const { data: menuData, refetch: refetchMenus } =
+    useFetch<{ menus: MenuSummary[] }>('/menu/all', token);
   const menus = menuData?.menus || [];
 
   const [locationId, setLocationId] = useState<number | null>(null);
@@ -89,6 +97,7 @@ export default function ServicePeriodManagement() {
   // --- period create / edit -------------------------------------------------
 
   function openCreate() {
+    void refetchMenus();
     setEditing(null);
     setForm({ ...emptyForm, menuId: menus[0] ? String(menus[0].id) : '' });
     setSaveError(null);
@@ -96,6 +105,7 @@ export default function ServicePeriodManagement() {
   }
 
   function openEdit(period: AdminServicePeriod) {
+    void refetchMenus();
     setEditing(period);
     setForm({
       name: period.name,
