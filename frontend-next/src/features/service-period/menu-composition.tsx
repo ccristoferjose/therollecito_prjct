@@ -1,11 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Layers, Plus, X, AlertTriangle, Link2 } from 'lucide-react';
+import { Layers, Plus, X, AlertTriangle, Link2, FilePlus2 } from 'lucide-react';
 import { useStaffAuth } from '@/providers/staff-auth-provider';
 import { api, ApiError } from '@/lib/api/client';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
+import Modal from '@/components/ui/modal';
+import Input from '@/components/ui/input';
 import Badge from '@/components/ui/badge';
 import Spinner from '@/components/ui/spinner';
 import type { MenuSummary } from './types';
@@ -52,6 +54,8 @@ export default function MenuComposition() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showNewMenu, setShowNewMenu] = useState(false);
+  const [newMenuName, setNewMenuName] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -94,6 +98,29 @@ export default function MenuComposition() {
   const notOn = (menuId: number) =>
     categories.filter((c) => !pairs.some((p) => p.menu_id === menuId && p.category_id === c.id));
 
+  /**
+   * Create a menu. The backend has always supported this (POST /menu), but no
+   * admin screen exposed it, so a second menu could only be made with curl —
+   * which made the whole service-period split unreachable from the UI.
+   */
+  async function createMenu(e: React.FormEvent) {
+    e.preventDefault();
+    const name = newMenuName.trim();
+    if (!name) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post('/menu', { name }, token);
+      setShowNewMenu(false);
+      setNewMenuName('');
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not create the menu');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function attach(menuId: number, categoryId: number) {
     setBusy(true);
     setError(null);
@@ -133,7 +160,8 @@ export default function MenuComposition() {
 
   return (
     <div>
-      <div className="mb-4">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
         <h2 className="flex items-center gap-2 text-xl font-bold text-text">
           <Layers size={18} /> Menu composition
         </h2>
@@ -142,6 +170,10 @@ export default function MenuComposition() {
           available in a given service period. A category on more than one menu lets the same
           product be sold in several periods without duplicating it.
         </p>
+        </div>
+        <Button variant="accent" onClick={() => { setNewMenuName(''); setShowNewMenu(true); }}>
+          <FilePlus2 size={16} /> New menu
+        </Button>
       </div>
 
       {error && (
@@ -235,6 +267,31 @@ export default function MenuComposition() {
           );
         })}
       </div>
+
+      <Modal open={showNewMenu} onClose={() => setShowNewMenu(false)} title="New menu">
+        <form onSubmit={createMenu} className="space-y-4">
+          <Input
+            label="Menu name"
+            value={newMenuName}
+            onChange={(e) => setNewMenuName(e.target.value)}
+            placeholder="Breakfast Menu"
+            required
+            autoFocus
+          />
+          <p className="text-xs text-text-secondary">
+            A new menu starts empty. Add categories to it from the Menu screen, or attach existing
+            ones here — then point a service period at it.
+          </p>
+          <div className="flex gap-3">
+            <Button type="button" variant="outline" className="flex-1" onClick={() => setShowNewMenu(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="accent" className="flex-1" disabled={busy || !newMenuName.trim()}>
+              {busy ? <Spinner size="sm" /> : 'Create menu'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       <p className="mt-4 text-xs text-text-secondary">
         A category must stay on at least one menu — otherwise its products would disappear from
