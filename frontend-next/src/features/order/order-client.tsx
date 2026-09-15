@@ -257,7 +257,10 @@ export default function OrderClient() {
                 setSelectedOptions([]);
               }}
             >
-              <div className="mb-3 flex h-32 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-primary-light to-primary/10">
+              {/* 4:3 of the card width rather than a fixed height. At the 2-up
+                  breakpoint a card is ~480px wide, so the old h-32 letterboxed
+                  every photo to roughly 3.75:1 and cropped the food out. */}
+              <div className="mb-3 flex aspect-[4/3] items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-primary-light to-primary/10">
                 {item.image_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={item.image_url} alt={item.name} className="h-full w-full object-cover" loading="lazy" />
@@ -283,7 +286,7 @@ export default function OrderClient() {
       <Modal open={!!selectedItem} onClose={() => setSelectedItem(null)} title={selectedItem?.name || ''}>
         {selectedItem && (
           <div className="space-y-4">
-            <div className="flex h-40 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-primary-light to-primary/10">
+            <div className="flex aspect-[4/3] max-h-[40vh] items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-primary-light to-primary/10">
               {selectedItem.image_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={selectedItem.image_url} alt={selectedItem.name} className="h-full w-full object-cover" />
