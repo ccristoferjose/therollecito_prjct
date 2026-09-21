@@ -41,3 +41,27 @@ export function timeAgo(dateString: string): string {
   const hours = Math.floor(minutes / 60);
   return `${hours}h ago`;
 }
+
+/**
+ * Day-aware time label: "Today at 10:00 AM", "Tomorrow at 9:00 AM",
+ * "Fri, Sep 25 at 9:00 AM".
+ *
+ * The kitchen board shows scheduled orders alongside live ones, so a bare
+ * "10:00 AM" is ambiguous — staff cannot tell today's rush from tomorrow's
+ * pre-order. `relativeTo` is the clock to compare against (the server-corrected
+ * one on the board, so a drifted tablet doesn't mislabel a day boundary).
+ */
+export function formatWhen(dateString: string, relativeTo: number = Date.now()): string {
+  const date = new Date(dateString);
+  const time = formatTime(dateString);
+
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((startOfDay(date) - startOfDay(new Date(relativeTo))) / 86_400_000);
+
+  if (days === 0) return `Today at ${time}`;
+  if (days === 1) return `Tomorrow at ${time}`;
+  if (days === -1) return `Yesterday at ${time}`;
+
+  const day = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  return `${day} at ${time}`;
+}
