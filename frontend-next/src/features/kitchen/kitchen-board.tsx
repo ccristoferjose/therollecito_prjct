@@ -1,21 +1,22 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Clock, ChefHat, Bell, CheckCircle, Volume2, VolumeX, AlertTriangle,
   User, Timer, MapPin, CreditCard, RotateCcw, XCircle, Flame, MoreVertical, ArrowRight, Package,
-  MessageSquare, Phone, Mail,
+  MessageSquare, Phone, Mail, Clock3,
 } from 'lucide-react';
 import Modal from '@/components/ui/modal';
 import { useStaffAuth } from '@/providers/staff-auth-provider';
 import { useFetch } from '@/lib/hooks/use-fetch';
 import { useSocket } from '@/lib/hooks/use-socket';
 import { api, ApiError } from '@/lib/api/client';
-import { formatCurrency, formatOrderNumber } from '@/lib/utils/format';
+import { formatCurrency, formatOrderNumber, formatWhen } from '@/lib/utils/format';
 import Button from '@/components/ui/button';
 import Spinner from '@/components/ui/spinner';
 import type { Location } from '@/lib/types';
-import type { KitchenOrder, KitchenColumn } from '@/features/kitchen/types';
+import type { KitchenOrder, KitchenColumn, KitchenBoardResponse } from '@/features/kitchen/types';
+import KitchenScheduleStrip from '@/features/kitchen/kitchen-schedule-strip';
 
 const COLUMNS: KitchenColumn[] = [
   { status: 'PAID', label: 'New Orders', icon: Clock, nextStatus: 'PREPARING', nextAction: 'Start', nextIcon: ChefHat, headerBg: 'bg-[#F2D6B3]', headerText: 'text-primary-dark', accent: 'border-t-4 border-t-[#A86A4A]', dot: 'bg-[#A86A4A]' },
@@ -70,6 +71,7 @@ function KanbanCard({
   order,
   column,
   expanded,
+  nowMs,
   onSelect,
   onAdvance,
   onPrioritize,
@@ -78,6 +80,7 @@ function KanbanCard({
   order: KitchenOrder;
   column: KitchenColumn;
   expanded: boolean;
+  nowMs: number | null;
   onSelect: (id: number) => void;
   onAdvance: (id: number, nextStatus: string) => Promise<void>;
   onPrioritize: (order: KitchenOrder) => void;
@@ -203,11 +206,21 @@ function KanbanCard({
             <User size={16} className="shrink-0 text-text-secondary" />
             <span className="truncate font-semibold text-primary-dark">{customerName}</span>
             {order.pickup_time && (
-              <span className="ml-auto text-xs text-text-secondary">
-                Pickup {new Date(order.pickup_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+              <span className="ml-auto text-xs font-semibold text-text-secondary">
+                Pickup {formatWhen(order.pickup_time, nowMs ?? undefined)}
               </span>
             )}
           </div>
+
+          {/* Why this order is on the board now. Only worth saying when the
+              kitchen has a real lead time to respect — an ASAP order has no
+              prepare_at distinct from when it was placed. */}
+          {order.prepare_at && order.pickup_time && (
+            <div className="flex items-center gap-1.5 px-4 pb-2 text-xs font-semibold text-[#A86A4A]">
+              <Clock3 size={13} className="shrink-0" />
+              Start prep {formatWhen(order.prepare_at, nowMs ?? undefined)}
+            </div>
+          )}
 
           {/* Contact details — the kitchen needs a way to reach the customer
               about a missing item or a note it cannot fulfil. */}
@@ -341,6 +354,7 @@ function KanbanColumn({
   column,
   orders,
   loading,
+  nowMs,
   selectedOrderId,
   onSelect,
   onAdvance,
@@ -350,6 +364,7 @@ function KanbanColumn({
   column: KitchenColumn;
   orders: KitchenOrder[];
   loading: boolean;
+  nowMs: number | null;
   selectedOrderId: number | null;
   onSelect: (id: number) => void;
   onAdvance: (id: number, nextStatus: string) => Promise<void>;
@@ -387,6 +402,7 @@ function KanbanColumn({
               order={order}
               column={column}
               expanded={order.id === selectedOrderId}
+              nowMs={nowMs}
               onSelect={onSelect}
               onAdvance={onAdvance}
               onPrioritize={onPrioritize}
@@ -422,22 +438,65 @@ export default function KitchenBoard() {
     }
   }, [isAdmin, selectedLocationId, locations]);
 
-  const paidFetch = useFetch<KitchenOrder[]>(locationId ? `/kitchen/orders?location_id=${locationId}&status=PAID` : null, token);
-  const prepFetch = useFetch<KitchenOrder[]>(locationId ? `/kitchen/orders?location_id=${locationId}&status=PREPARING` : null, token);
-  const readyFetch = useFetch<KitchenOrder[]>(locationId ? `/kitchen/orders?location_id=${locationId}&status=READY` : null, token);
+  // One call for the whole board. It returns orders already bucketed by
+  // `prepare_at`, so a scheduled order for tomorrow never lands in New Orders.
+  const boardFetch = useFetch<KitchenBoardResponse>(
+    locationId ? `/kitchen/board?location_id=${locationId}` : null,
+    token,
+  );
+  const board = boardFetch.data;
+  const anyLoading = boardFetch.loading;
+  const refetchAll = boardFetch.refetch;
+
+  // Offset between the server clock and this tablet's clock. Bucket boundaries
+  // are the server's, so a device with a skewed clock must not shift them.
+  const [serverOffset, setServerOffset] = useState(0);
+  useEffect(() => {
+    if (board?.server_time) {
+      setServerOffset(Date.parse(board.server_time) - Date.now());
+    }
+  }, [board?.server_time]);
+
+  // Server-corrected wall clock, ticked locally. Between polls an order can
+  // reach its prepare_at, and the board promotes it from Upcoming to the queue
+  // without waiting for the next fetch. Held in state rather than read during
+  // render so the first paint matches the server's own bucketing.
+  const [nowMs, setNowMs] = useState<number | null>(null);
+  useEffect(() => {
+    const update = () => setNowMs(Date.now() + serverOffset);
+    update();
+    const interval = setInterval(update, 15000);
+    return () => clearInterval(interval);
+  }, [serverOffset]);
+
+  const { queue, upcoming } = useMemo(() => {
+    if (!board) return { queue: [] as KitchenOrder[], upcoming: [] as KitchenOrder[] };
+    // Before the first tick, trust the buckets the server just computed.
+    if (nowMs === null) return { queue: board.queue, upcoming: board.upcoming };
+    // No prepare_at means an ASAP order, which is workable immediately.
+    const isDue = (o: KitchenOrder) => !o.prepare_at || Date.parse(o.prepare_at) <= nowMs;
+
+    // Mirrors the SQL ordering: priority first, then earliest prepare_at.
+    const byPriorityThenPrepare = (a: KitchenOrder, b: KitchenOrder) => {
+      const pa = a.is_priority ? 1 : 0;
+      const pb = b.is_priority ? 1 : 0;
+      if (pa !== pb) return pb - pa;
+      const ta = a.prepare_at ? Date.parse(a.prepare_at) : Date.parse(a.created_at);
+      const tb = b.prepare_at ? Date.parse(b.prepare_at) : Date.parse(b.created_at);
+      return ta - tb;
+    };
+
+    return {
+      queue: [...board.queue, ...board.upcoming.filter(isDue)].sort(byPriorityThenPrepare),
+      upcoming: board.upcoming.filter((o) => !isDue(o)),
+    };
+  }, [board, nowMs]);
 
   const columnOrders: Record<string, KitchenOrder[]> = {
-    PAID: Array.isArray(paidFetch.data) ? paidFetch.data : [],
-    PREPARING: Array.isArray(prepFetch.data) ? prepFetch.data : [],
-    READY: Array.isArray(readyFetch.data) ? readyFetch.data : [],
+    PAID: queue,
+    PREPARING: board?.preparing ?? [],
+    READY: board?.ready ?? [],
   };
-  const anyLoading = paidFetch.loading || prepFetch.loading || readyFetch.loading;
-
-  const refetchAll = useCallback(() => {
-    paidFetch.refetch();
-    prepFetch.refetch();
-    readyFetch.refetch();
-  }, [paidFetch, prepFetch, readyFetch]);
 
   const playNotification = useCallback(() => {
     if (!soundEnabled) return;
@@ -599,6 +658,7 @@ export default function KitchenBoard() {
               column={col}
               orders={columnOrders[col.status]}
               loading={anyLoading}
+              nowMs={nowMs}
               selectedOrderId={selectedOrderId}
               onSelect={toggleSelected}
               onAdvance={advanceStatus}
@@ -608,6 +668,13 @@ export default function KitchenBoard() {
           ))}
         </div>
       </div>
+
+      <KitchenScheduleStrip
+        upcoming={upcoming}
+        laterToday={board?.later_today ?? []}
+        scheduledCount={board?.scheduled_count ?? 0}
+        windowMinutes={board?.upcoming_window_minutes ?? 30}
+      />
 
       <Modal open={!!priorityModal} onClose={modalSubmitting ? () => {} : closeActionModals} title={`Send order ${priorityModal?.order ? formatOrderNumber(priorityModal.order) : ''} back to queue`}>
         <div className="space-y-4">

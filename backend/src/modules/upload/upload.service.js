@@ -64,4 +64,36 @@ async function uploadMenuItemImage(itemId, imageBase64) {
   return { key, url: publicUrl(key), bytes: buffer.length, mime };
 }
 
-module.exports = { uploadMenuItemImage };
+/**
+ * Upload promotional artwork for a campaign:
+ *
+ *   promo/campaigns/{campaignId}/{variant}-{timestamp}-{random}.{ext}
+ *
+ * `variant` is desktop or mobile — the two shapes a campaign can carry, so a
+ * vertical Instagram-style promo does not get letterboxed on a wide screen.
+ */
+async function uploadPromoCampaignImage(campaignId, variant, imageBase64) {
+  const client = getS3Client();
+  if (!client) {
+    throw new AppError('S3 is not configured on the server.', 500);
+  }
+  if (variant !== 'desktop' && variant !== 'mobile') {
+    throw new AppError('variant must be "desktop" or "mobile".', 400);
+  }
+
+  const { buffer, mime, ext } = parseDataUrl(imageBase64);
+  const random = crypto.randomBytes(6).toString('hex');
+  const key = `promo/campaigns/${campaignId}/${variant}-${Date.now()}-${random}.${ext}`;
+
+  await client.send(new PutObjectCommand({
+    Bucket: env.s3.bucket,
+    Key: key,
+    Body: buffer,
+    ContentType: mime,
+    CacheControl: 'public, max-age=31536000, immutable',
+  }));
+
+  return { key, url: publicUrl(key), bytes: buffer.length, mime };
+}
+
+module.exports = { uploadMenuItemImage, uploadPromoCampaignImage };

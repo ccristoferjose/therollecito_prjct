@@ -26,4 +26,19 @@ router.post(
   uploadController.uploadMenuItemImage
 );
 
+router.post(
+  '/promo-campaigns/:id/image',
+  largeJson,
+  requireAuth,
+  requireRole('admin', 'manager'),
+  [
+    param('id').isInt({ gt: 0 }),
+    body('variant').isIn(['desktop', 'mobile'])
+      .withMessage('variant must be "desktop" or "mobile".'),
+    body('image_base64').isString().notEmpty().withMessage('image_base64 is required.'),
+    validateRequest,
+  ],
+  uploadController.uploadPromoCampaignImage
+);
+
 module.exports = router;
