@@ -10,6 +10,7 @@ import { brandJsonLd } from '@/lib/seo/schema';
 import { env } from '@/lib/config/env';
 import JsonLd from '@/components/seo/json-ld';
 import LocationPicker from '@/features/locations/location-picker';
+import PromotionalModal from '@/features/promo-campaign/promotional-modal';
 import { getPublishedPeriods } from '@/features/service-period/public-queries';
 import type { MenuItem } from '@/lib/types';
 
@@ -58,6 +59,7 @@ export default async function LandingPage() {
 
   return (
     <>
+      <PromotionalModal />
       <JsonLd data={brandJsonLd(env.siteUrl)} />
 
       {/* HERO */}

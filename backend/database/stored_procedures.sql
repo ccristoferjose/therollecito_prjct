@@ -2537,4 +2537,510 @@ BEGIN
 END //
 
 
+
+-- #############################################################################
+-- #  SECTION: KITCHEN BOARD SCHEDULING
+-- #############################################################################
+--
+-- The kitchen board is a *view* over PAID orders, not a set of extra statuses.
+-- An order's bucket is derived from `prepare_at` at query time, so nothing has
+-- to move it between buckets as the clock advances — only NOW() changes.
+--
+--   prepare_at = pickup_time - service_period.prep_time_minutes
+--                (falls back to created_at for ASAP orders with no pickup_time)
+--
+--   prepare_at <= NOW()                         -> QUEUE       (New Orders)
+--   prepare_at <= NOW() + upcoming_window       -> UPCOMING    (on the board)
+--   prepare_at later today                      -> LATER_TODAY (collapsed)
+--   prepare_at on a later date                  -> SCHEDULED   (separate page)
+--
+-- PREPARING and READY orders are always on the board regardless of prepare_at:
+-- once staff have started an order its schedule no longer gates it.
+-- #############################################################################
+
+DROP PROCEDURE IF EXISTS sp_order_list_kitchen //
+CREATE PROCEDURE sp_order_list_kitchen(
+  IN p_location_id             INT UNSIGNED,
+  IN p_upcoming_window_minutes SMALLINT UNSIGNED
+)
+BEGIN
+  DECLARE v_window SMALLINT UNSIGNED DEFAULT 30;
+
+  IF p_upcoming_window_minutes IS NOT NULL THEN
+    SET v_window = p_upcoming_window_minutes;
+  END IF;
+
+  -- Temporary tables are per-connection and the app uses a pool, so drop any
+  -- leftovers from an earlier call that errored before its own cleanup.
+  DROP TEMPORARY TABLE IF EXISTS tmp_kitchen_board;
+
+  CREATE TEMPORARY TABLE tmp_kitchen_board (
+    order_id   INT UNSIGNED NOT NULL,
+    bucket     VARCHAR(12)  NOT NULL,
+    prepare_at DATETIME     NOT NULL,
+    PRIMARY KEY (order_id)
+  ) ENGINE=MEMORY;
+
+  INSERT INTO tmp_kitchen_board (order_id, bucket, prepare_at)
+  SELECT b.id,
+         CASE
+           WHEN b.status_name <> 'PAID'                             THEN b.status_name
+           WHEN b.prepare_at <= NOW()                               THEN 'QUEUE'
+           ELSE 'UPCOMING'
+         END,
+         b.prepare_at
+    FROM (
+      SELECT o.id,
+             os.name AS status_name,
+             COALESCE(
+               DATE_SUB(o.pickup_time, INTERVAL COALESCE(sp.prep_time_minutes, 0) MINUTE),
+               o.created_at
+             ) AS prepare_at
+        FROM `order` o
+        JOIN order_status os ON os.id = o.status_id
+        LEFT JOIN service_period sp ON sp.id = o.service_period_id
+       WHERE o.location_id = p_location_id
+         AND os.name IN ('PAID', 'PREPARING', 'READY')
+    ) b
+   WHERE b.status_name <> 'PAID'
+      OR b.prepare_at <= (NOW() + INTERVAL v_window MINUTE);
+
+  -- ---------------------------------------------------------------------------
+  -- RS1 — board orders. Same columns as sp_order_list_by_location plus the
+  -- derived bucket / prepare_at the UI groups on.
+  -- ---------------------------------------------------------------------------
+  SELECT o.id, o.display_number, o.user_id, o.status_id, os.name AS status_name,
+         o.guest_name, o.guest_phone, o.notes, o.total_amount, o.pickup_time, o.created_at,
+         o.is_priority, o.priority_set_at, o.priority_reason,
+         u.first_name AS user_first_name, u.last_name AS user_last_name,
+         u.email AS user_email, u.phone AS user_phone,
+         t.bucket, t.prepare_at
+    FROM tmp_kitchen_board t
+    JOIN `order` o        ON o.id = t.order_id
+    JOIN order_status os  ON os.id = o.status_id
+    LEFT JOIN `user` u    ON u.id = o.user_id
+   ORDER BY o.is_priority DESC,
+            CASE WHEN o.is_priority = 1 THEN o.priority_set_at ELSE t.prepare_at END ASC;
+
+  -- ---------------------------------------------------------------------------
+  -- RS2 / RS3 / RS4 — items, options and payments for the whole board in one
+  -- shot. These used to be N+1 round trips per order in kitchen.service.js.
+  -- Column lists mirror sp_order_get_items / sp_payment_get_by_order.
+  -- ---------------------------------------------------------------------------
+  SELECT oi.id, oi.order_id, oi.item_id,
+         COALESCE(i.name, oi.item_name) AS item_name,
+         CASE WHEN i.id IS NOT NULL AND i.is_active = 1 THEN 1 ELSE 0 END AS is_available,
+         oi.quantity, oi.unit_price, oi.notes
+    FROM tmp_kitchen_board t
+    JOIN order_item oi ON oi.order_id = t.order_id
+    LEFT JOIN item i   ON i.id = oi.item_id
+   ORDER BY oi.order_id, oi.id;
+
+  SELECT oio.id, oio.order_item_id, oio.item_option_value_id,
+         COALESCE(iov.name, oio.option_value_name) AS option_value_name,
+         COALESCE(io.name,  oio.option_name)       AS option_name,
+         oio.price_modifier
+    FROM tmp_kitchen_board t
+    JOIN order_item oi  ON oi.order_id = t.order_id
+    JOIN order_item_option oio ON oio.order_item_id = oi.id
+    LEFT JOIN item_option_value iov ON iov.id = oio.item_option_value_id
+    LEFT JOIN item_option io        ON io.id = iov.item_option_id
+   ORDER BY oio.order_item_id, oio.id;
+
+  -- Latest payment row per order (a retried PaymentIntent leaves more than one).
+  SELECT p.order_id, p.status, p.amount, p.currency
+    FROM payment p
+    JOIN tmp_kitchen_board t ON t.order_id = p.order_id
+   WHERE p.id = (
+     SELECT MAX(p2.id) FROM payment p2 WHERE p2.order_id = p.order_id
+   );
+
+  -- ---------------------------------------------------------------------------
+  -- RS5 — "Later today": PAID orders past the upcoming window whose prepare_at
+  -- still falls on today's date. Reference/workload preview only, so no items
+  -- are joined — the kitchen cannot act on these yet.
+  -- ---------------------------------------------------------------------------
+  SELECT o.id, o.display_number, o.guest_name, o.total_amount,
+         o.pickup_time, o.created_at, o.notes,
+         u.first_name AS user_first_name, u.last_name AS user_last_name,
+         COALESCE(
+           DATE_SUB(o.pickup_time, INTERVAL COALESCE(sp.prep_time_minutes, 0) MINUTE),
+           o.created_at
+         ) AS prepare_at,
+         (SELECT COUNT(*) FROM order_item oi WHERE oi.order_id = o.id) AS item_count
+    FROM `order` o
+    JOIN order_status os ON os.id = o.status_id
+    LEFT JOIN `user` u   ON u.id = o.user_id
+    LEFT JOIN service_period sp ON sp.id = o.service_period_id
+   WHERE o.location_id = p_location_id
+     AND os.name = 'PAID'
+     AND COALESCE(
+           DATE_SUB(o.pickup_time, INTERVAL COALESCE(sp.prep_time_minutes, 0) MINUTE),
+           o.created_at
+         ) >  (NOW() + INTERVAL v_window MINUTE)
+     AND DATE(COALESCE(
+           DATE_SUB(o.pickup_time, INTERVAL COALESCE(sp.prep_time_minutes, 0) MINUTE),
+           o.created_at
+         )) = CURDATE()
+   ORDER BY prepare_at ASC;
+
+  -- ---------------------------------------------------------------------------
+  -- RS6 — count of future-dated orders, so the board can badge the link to the
+  -- Scheduled page without fetching the rows.
+  -- ---------------------------------------------------------------------------
+  SELECT COUNT(*) AS scheduled_count
+    FROM `order` o
+    JOIN order_status os ON os.id = o.status_id
+    LEFT JOIN service_period sp ON sp.id = o.service_period_id
+   WHERE o.location_id = p_location_id
+     AND os.name = 'PAID'
+     AND DATE(COALESCE(
+           DATE_SUB(o.pickup_time, INTERVAL COALESCE(sp.prep_time_minutes, 0) MINUTE),
+           o.created_at
+         )) > CURDATE();
+
+  DROP TEMPORARY TABLE IF EXISTS tmp_kitchen_board;
+END //
+
+-- -----------------------------------------------------------------------------
+-- sp_order_list_scheduled — future-dated orders for the Scheduled page.
+--
+-- Same derived prepare_at, but the window is whole days rather than minutes.
+-- p_date_from / p_date_to are inclusive DATEs; both NULL means "everything
+-- from tomorrow onwards".
+-- -----------------------------------------------------------------------------
+DROP PROCEDURE IF EXISTS sp_order_list_scheduled //
+CREATE PROCEDURE sp_order_list_scheduled(
+  IN p_location_id INT UNSIGNED,
+  IN p_date_from   DATE,
+  IN p_date_to     DATE
+)
+BEGIN
+  DROP TEMPORARY TABLE IF EXISTS tmp_kitchen_scheduled;
+
+  CREATE TEMPORARY TABLE tmp_kitchen_scheduled (
+    order_id   INT UNSIGNED NOT NULL,
+    prepare_at DATETIME     NOT NULL,
+    PRIMARY KEY (order_id)
+  ) ENGINE=MEMORY;
+
+  INSERT INTO tmp_kitchen_scheduled (order_id, prepare_at)
+  SELECT o.id,
+         COALESCE(
+           DATE_SUB(o.pickup_time, INTERVAL COALESCE(sp.prep_time_minutes, 0) MINUTE),
+           o.created_at
+         ) AS prepare_at
+    FROM `order` o
+    JOIN order_status os ON os.id = o.status_id
+    LEFT JOIN service_period sp ON sp.id = o.service_period_id
+   WHERE o.location_id = p_location_id
+     AND os.name = 'PAID'
+     AND DATE(COALESCE(
+           DATE_SUB(o.pickup_time, INTERVAL COALESCE(sp.prep_time_minutes, 0) MINUTE),
+           o.created_at
+         )) > CURDATE()
+     AND (p_date_from IS NULL OR DATE(COALESCE(
+           DATE_SUB(o.pickup_time, INTERVAL COALESCE(sp.prep_time_minutes, 0) MINUTE),
+           o.created_at
+         )) >= p_date_from)
+     AND (p_date_to IS NULL OR DATE(COALESCE(
+           DATE_SUB(o.pickup_time, INTERVAL COALESCE(sp.prep_time_minutes, 0) MINUTE),
+           o.created_at
+         )) <= p_date_to);
+
+  SELECT o.id, o.display_number, o.user_id, o.status_id, os.name AS status_name,
+         o.guest_name, o.guest_phone, o.notes, o.total_amount, o.pickup_time, o.created_at,
+         o.is_priority, o.priority_reason,
+         u.first_name AS user_first_name, u.last_name AS user_last_name,
+         u.email AS user_email, u.phone AS user_phone,
+         t.prepare_at,
+         DATE(t.prepare_at) AS prepare_date
+    FROM tmp_kitchen_scheduled t
+    JOIN `order` o       ON o.id = t.order_id
+    JOIN order_status os ON os.id = o.status_id
+    LEFT JOIN `user` u   ON u.id = o.user_id
+   ORDER BY t.prepare_at ASC;
+
+  SELECT oi.id, oi.order_id, oi.item_id,
+         COALESCE(i.name, oi.item_name) AS item_name,
+         CASE WHEN i.id IS NOT NULL AND i.is_active = 1 THEN 1 ELSE 0 END AS is_available,
+         oi.quantity, oi.unit_price, oi.notes
+    FROM tmp_kitchen_scheduled t
+    JOIN order_item oi ON oi.order_id = t.order_id
+    LEFT JOIN item i   ON i.id = oi.item_id
+   ORDER BY oi.order_id, oi.id;
+
+  SELECT oio.id, oio.order_item_id, oio.item_option_value_id,
+         COALESCE(iov.name, oio.option_value_name) AS option_value_name,
+         COALESCE(io.name,  oio.option_name)       AS option_name,
+         oio.price_modifier
+    FROM tmp_kitchen_scheduled t
+    JOIN order_item oi  ON oi.order_id = t.order_id
+    JOIN order_item_option oio ON oio.order_item_id = oi.id
+    LEFT JOIN item_option_value iov ON iov.id = oio.item_option_value_id
+    LEFT JOIN item_option io        ON io.id = iov.item_option_id
+   ORDER BY oio.order_item_id, oio.id;
+
+  DROP TEMPORARY TABLE IF EXISTS tmp_kitchen_scheduled;
+END //
+
+
+-- #############################################################################
+-- #  SECTION: PROMO CAMPAIGN (promotional modal)
+-- #############################################################################
+--
+-- promo_campaign holds the artwork + schedule; promotion holds the discount.
+-- The link is optional in both directions (see migration 007).
+--
+-- Weekday semantics: NO promo_campaign_day rows means the campaign runs EVERY
+-- day. Once any day is selected, only those days run.
+-- #############################################################################
+
+-- -----------------------------------------------------------------------------
+-- sp_promo_campaign_active — PUBLIC. The one campaign to show a visitor now.
+--
+-- Returns at most one row, so the client never has to choose between competing
+-- modals. Ties break on priority, then most recently created.
+-- -----------------------------------------------------------------------------
+DROP PROCEDURE IF EXISTS sp_promo_campaign_active //
+CREATE PROCEDURE sp_promo_campaign_active()
+BEGIN
+  SELECT c.id, c.name,
+         c.image_desktop_url, c.image_mobile_url, c.image_alt,
+         c.button_text, c.button_url, c.frequency,
+         c.starts_on, c.ends_on,
+         p.code AS promo_code,
+         p.discount_type, p.discount_value
+    FROM promo_campaign c
+    LEFT JOIN promotion p
+      ON p.id = c.promotion_id
+     -- Only advertise a code that is itself still redeemable, otherwise the
+     -- modal sends customers to checkout with a code the engine will reject.
+     AND p.is_active = 1
+     AND p.starts_at <= NOW()
+     AND (p.expires_at IS NULL OR p.expires_at >= NOW())
+   WHERE c.is_active = 1
+     AND c.starts_on <= CURDATE()
+     AND (c.ends_on IS NULL OR c.ends_on >= CURDATE())
+     AND (c.image_desktop_url IS NOT NULL OR c.image_mobile_url IS NOT NULL)
+     AND (
+       NOT EXISTS (SELECT 1 FROM promo_campaign_day d WHERE d.promo_campaign_id = c.id)
+       OR EXISTS (
+         SELECT 1 FROM promo_campaign_day d
+          WHERE d.promo_campaign_id = c.id
+            AND d.day_of_week = DAYOFWEEK(CURDATE())
+       )
+     )
+   ORDER BY c.priority DESC, c.id DESC
+   LIMIT 1;
+END //
+
+-- -----------------------------------------------------------------------------
+-- sp_promo_campaign_list — ADMIN. Every campaign, newest first.
+-- Second result set carries the weekday rows for all of them at once.
+-- -----------------------------------------------------------------------------
+DROP PROCEDURE IF EXISTS sp_promo_campaign_list //
+CREATE PROCEDURE sp_promo_campaign_list()
+BEGIN
+  SELECT c.id, c.name, c.promotion_id,
+         c.image_desktop_url, c.image_mobile_url, c.image_alt,
+         c.button_text, c.button_url, c.frequency,
+         c.starts_on, c.ends_on, c.priority, c.is_active,
+         c.created_at, c.updated_at,
+         p.code AS promo_code
+    FROM promo_campaign c
+    LEFT JOIN promotion p ON p.id = c.promotion_id
+   ORDER BY c.is_active DESC, c.priority DESC, c.id DESC;
+
+  SELECT d.promo_campaign_id, d.day_of_week
+    FROM promo_campaign_day d
+   ORDER BY d.promo_campaign_id, d.day_of_week;
+END //
+
+DROP PROCEDURE IF EXISTS sp_promo_campaign_get //
+CREATE PROCEDURE sp_promo_campaign_get(IN p_id INT UNSIGNED)
+BEGIN
+  SELECT c.id, c.name, c.promotion_id,
+         c.image_desktop_url, c.image_mobile_url, c.image_alt,
+         c.button_text, c.button_url, c.frequency,
+         c.starts_on, c.ends_on, c.priority, c.is_active,
+         c.created_at, c.updated_at,
+         p.code AS promo_code
+    FROM promo_campaign c
+    LEFT JOIN promotion p ON p.id = c.promotion_id
+   WHERE c.id = p_id;
+
+  SELECT d.promo_campaign_id, d.day_of_week
+    FROM promo_campaign_day d
+   WHERE d.promo_campaign_id = p_id
+   ORDER BY d.day_of_week;
+END //
+
+-- -----------------------------------------------------------------------------
+-- sp_promo_campaign_days_replace — set the weekday selection in one call.
+--
+-- p_days_csv is a comma-separated DAYOFWEEK() list ("2,6" = Mon + Fri). An
+-- empty string or NULL clears every row, which means "runs every day".
+-- -----------------------------------------------------------------------------
+DROP PROCEDURE IF EXISTS sp_promo_campaign_days_replace //
+CREATE PROCEDURE sp_promo_campaign_days_replace(
+  IN p_id       INT UNSIGNED,
+  IN p_days_csv VARCHAR(50)
+)
+BEGIN
+  DECLARE v_day TINYINT UNSIGNED DEFAULT 1;
+
+  DELETE FROM promo_campaign_day WHERE promo_campaign_id = p_id;
+
+  IF p_days_csv IS NOT NULL AND p_days_csv <> '' THEN
+    WHILE v_day <= 7 DO
+      IF FIND_IN_SET(v_day, p_days_csv) > 0 THEN
+        INSERT INTO promo_campaign_day (promo_campaign_id, day_of_week)
+        VALUES (p_id, v_day);
+      END IF;
+      SET v_day = v_day + 1;
+    END WHILE;
+  END IF;
+END //
+
+DROP PROCEDURE IF EXISTS sp_promo_campaign_create //
+CREATE PROCEDURE sp_promo_campaign_create(
+  IN p_name              VARCHAR(150),
+  IN p_promotion_id      INT UNSIGNED,
+  IN p_image_desktop_url VARCHAR(512),
+  IN p_image_mobile_url  VARCHAR(512),
+  IN p_image_alt         VARCHAR(255),
+  IN p_button_text       VARCHAR(80),
+  IN p_button_url        VARCHAR(255),
+  IN p_frequency         VARCHAR(20),
+  IN p_starts_on         DATE,
+  IN p_ends_on           DATE,
+  IN p_priority          INT UNSIGNED,
+  IN p_is_active         TINYINT(1),
+  IN p_days_csv          VARCHAR(50)
+)
+BEGIN
+  DECLARE v_id INT UNSIGNED;
+
+  IF p_name IS NULL OR TRIM(p_name) = '' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Campaign name is required.';
+  END IF;
+  IF p_starts_on IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'A start date is required.';
+  END IF;
+
+  START TRANSACTION;
+
+  INSERT INTO promo_campaign (
+    name, promotion_id, image_desktop_url, image_mobile_url, image_alt,
+    button_text, button_url, frequency, starts_on, ends_on, priority, is_active
+  ) VALUES (
+    TRIM(p_name), p_promotion_id, p_image_desktop_url, p_image_mobile_url, p_image_alt,
+    p_button_text, p_button_url, COALESCE(p_frequency, 'once_per_day'),
+    p_starts_on, p_ends_on, COALESCE(p_priority, 0), COALESCE(p_is_active, 1)
+  );
+  SET v_id = LAST_INSERT_ID();
+
+  CALL sp_promo_campaign_days_replace(v_id, p_days_csv);
+
+  COMMIT;
+
+  CALL sp_promo_campaign_get(v_id);
+END //
+
+-- -----------------------------------------------------------------------------
+-- sp_promo_campaign_update — every parameter is optional.
+--
+-- NULL means "leave unchanged", so a partial edit (e.g. only toggling
+-- is_active) does not blank the rest of the row. Clearing a nullable field to
+-- NULL is therefore done with the sentinel '' for the string columns.
+-- -----------------------------------------------------------------------------
+DROP PROCEDURE IF EXISTS sp_promo_campaign_update //
+CREATE PROCEDURE sp_promo_campaign_update(
+  IN p_id                INT UNSIGNED,
+  IN p_name              VARCHAR(150),
+  IN p_promotion_id      INT UNSIGNED,
+  IN p_clear_promotion   TINYINT(1),
+  IN p_image_desktop_url VARCHAR(512),
+  IN p_image_mobile_url  VARCHAR(512),
+  IN p_image_alt         VARCHAR(255),
+  IN p_button_text       VARCHAR(80),
+  IN p_button_url        VARCHAR(255),
+  IN p_frequency         VARCHAR(20),
+  IN p_starts_on         DATE,
+  IN p_ends_on           DATE,
+  IN p_clear_ends_on     TINYINT(1),
+  IN p_priority          INT UNSIGNED,
+  IN p_is_active         TINYINT(1),
+  IN p_days_csv          VARCHAR(50),
+  IN p_set_days          TINYINT(1)
+)
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM promo_campaign WHERE id = p_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Campaign not found.';
+  END IF;
+
+  START TRANSACTION;
+
+  UPDATE promo_campaign
+     SET name              = COALESCE(NULLIF(TRIM(COALESCE(p_name, '')), ''), name),
+         promotion_id      = CASE WHEN p_clear_promotion = 1 THEN NULL
+                                  ELSE COALESCE(p_promotion_id, promotion_id) END,
+         image_desktop_url = CASE WHEN p_image_desktop_url = '' THEN NULL
+                                  ELSE COALESCE(p_image_desktop_url, image_desktop_url) END,
+         image_mobile_url  = CASE WHEN p_image_mobile_url = '' THEN NULL
+                                  ELSE COALESCE(p_image_mobile_url, image_mobile_url) END,
+         image_alt         = CASE WHEN p_image_alt = '' THEN NULL
+                                  ELSE COALESCE(p_image_alt, image_alt) END,
+         button_text       = CASE WHEN p_button_text = '' THEN NULL
+                                  ELSE COALESCE(p_button_text, button_text) END,
+         button_url        = CASE WHEN p_button_url = '' THEN NULL
+                                  ELSE COALESCE(p_button_url, button_url) END,
+         frequency         = COALESCE(p_frequency, frequency),
+         starts_on         = COALESCE(p_starts_on, starts_on),
+         ends_on           = CASE WHEN p_clear_ends_on = 1 THEN NULL
+                                  ELSE COALESCE(p_ends_on, ends_on) END,
+         priority          = COALESCE(p_priority, priority),
+         is_active         = COALESCE(p_is_active, is_active)
+   WHERE id = p_id;
+
+  -- Only touch the weekday rows when the caller actually sent a selection,
+  -- so an unrelated PATCH (a status toggle) leaves the schedule alone.
+  IF p_set_days = 1 THEN
+    CALL sp_promo_campaign_days_replace(p_id, p_days_csv);
+  END IF;
+
+  COMMIT;
+
+  CALL sp_promo_campaign_get(p_id);
+END //
+
+DROP PROCEDURE IF EXISTS sp_promo_campaign_delete //
+CREATE PROCEDURE sp_promo_campaign_delete(IN p_id INT UNSIGNED)
+BEGIN
+  -- promo_campaign_day cascades. Campaigns carry no history worth preserving,
+  -- so unlike a service period this is a genuine delete.
+  DELETE FROM promo_campaign WHERE id = p_id;
+  SELECT ROW_COUNT() AS deleted;
+END //
+
+-- Writes an uploaded artwork URL back onto the campaign.
+DROP PROCEDURE IF EXISTS sp_promo_campaign_set_image //
+CREATE PROCEDURE sp_promo_campaign_set_image(
+  IN p_id      INT UNSIGNED,
+  IN p_variant VARCHAR(10),
+  IN p_url     VARCHAR(512)
+)
+BEGIN
+  IF p_variant = 'desktop' THEN
+    UPDATE promo_campaign SET image_desktop_url = p_url WHERE id = p_id;
+  ELSEIF p_variant = 'mobile' THEN
+    UPDATE promo_campaign SET image_mobile_url = p_url WHERE id = p_id;
+  ELSE
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'variant must be desktop or mobile.';
+  END IF;
+
+  CALL sp_promo_campaign_get(p_id);
+END //
+
 DELIMITER ;

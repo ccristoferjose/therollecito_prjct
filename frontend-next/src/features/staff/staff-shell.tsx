@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard, UtensilsCrossed, MapPin, Users, Tag, LogOut, ChefHat, ClipboardList,
-  Contact, Clock,
+  Contact, Clock, CalendarClock, Megaphone,
 } from 'lucide-react';
 import { useStaffAuth } from '@/providers/staff-auth-provider';
 import { useFetch } from '@/lib/hooks/use-fetch';
@@ -31,10 +31,14 @@ const adminNav: NavItem[] = [
   // Staff accounts live under Users; Clients is the customer directory.
   { to: '/staff/admin/clients', icon: Contact, label: 'Clients' },
   { to: '/staff/admin/promotions', icon: Tag, label: 'Promotions' },
+  // Promo codes are the discount; campaigns are the artwork that advertises it.
+  { to: '/staff/admin/campaigns', icon: Megaphone, label: 'Campaigns' },
 ];
 
 const kitchenNav: NavItem[] = [
   { to: '/staff/kitchen', icon: ChefHat, label: 'Orders', end: true },
+  // Future-dated orders, kept off the live board until their prep time arrives.
+  { to: '/staff/kitchen/scheduled', icon: CalendarClock, label: 'Scheduled' },
   { to: '/staff/kitchen/history', icon: ClipboardList, label: 'History' },
 ];
 
