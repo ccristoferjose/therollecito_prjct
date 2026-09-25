@@ -71,6 +71,9 @@ const en = {
     hours: 'Hours',
     hoursValue: 'Mon – Fri · 7 AM – 11 AM\n Everyday · 3 PM – 9 PM',
     rights: 'All rights reserved.',
+    legal: 'Legal',
+    privacy: 'Privacy Policy',
+    accessibility: 'Accessibility',
   },
 
   // Locations page
@@ -122,6 +125,7 @@ const en = {
     orderDetails: 'Order Details',
     specialInstructions: 'Special Instructions',
     specialPlaceholder: 'Allergies, special requests...',
+    optional: '(optional)',
     orderSummary: 'Order Summary',
     total: 'Total',
     placeOrder: 'Place Order',
@@ -174,6 +178,25 @@ const en = {
     trackOrder: 'Track Order',
     recentOrders: 'Your Recent Orders',
     lookupHint: 'Have a tracking code? Enter it below.',
+  },
+
+  // Screen-reader-only text and status announcements
+  a11y: {
+    skipToContent: 'Skip to main content',
+    mainNav: 'Main',
+    footerNav: 'Footer',
+    opensInNewTab: '(opens in a new tab)',
+    cartCount: '{n} items in cart',
+    cartCountOne: '1 item in cart',
+    addedToCart: '{name} added to cart. {n} items in cart.',
+    addedToCartOne: '{name} added to cart. 1 item in cart.',
+    removedFromCart: '{name} removed from cart.',
+    quantityChanged: '{name}: quantity {n}.',
+    decreaseQuantity: 'Decrease quantity of {name}',
+    increaseQuantity: 'Increase quantity of {name}',
+    removeItem: 'Remove {name} from cart',
+    addItem: 'Add {name}',
+    categories: 'Menu categories',
   },
 
   // Language

@@ -5,6 +5,8 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ShoppingBag, Plus, MapPin, RefreshCw, Clock } from 'lucide-react';
 import { useLang } from '@/providers/lang-provider';
+import { useAnnounce } from '@/providers/announcer-provider';
+import { fmt } from '@/lib/i18n';
 import { useFetch } from '@/lib/hooks/use-fetch';
 import { useCart } from '@/providers/cart-provider';
 import { usePickup } from '@/providers/pickup-provider';
@@ -12,7 +14,7 @@ import PickupPicker from '@/features/service-period/pickup-picker';
 import type { PickupMenuData } from '@/features/service-period/types';
 import { formatCurrency } from '@/lib/utils/format';
 import Card from '@/components/ui/card';
-import Button from '@/components/ui/button';
+import Button, { buttonVariants } from '@/components/ui/button';
 import Badge from '@/components/ui/badge';
 import Modal from '@/components/ui/modal';
 import Spinner from '@/components/ui/spinner';
@@ -30,6 +32,7 @@ export default function OrderClient() {
   const { data: locations } = useFetch<Location[]>('/locations');
   const { addItem, itemCount, total, setLocation, locationId: cartLocationId } = useCart();
   const { pickupTime } = usePickup();
+  const announce = useAnnounce();
 
   const [pendingLocationId, setPendingLocationId] = useState<number | null>(null);
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
@@ -63,7 +66,7 @@ export default function OrderClient() {
   // The SELECTED PICKUP TIME — not the current clock — decides which service
   // period applies and therefore which menu loads. Omitting it resolves against
   // "as soon as possible". A closed time returns 400 with a displayable message.
-  const { data: menuData, loading, error: menuError } = useFetch<PickupMenuData>(
+  const { data: menuData, loading, error: menuError, settled: menuSettled } = useFetch<PickupMenuData>(
     effectiveLocationId
       ? `/menu/location/${effectiveLocationId}/pickup${
           pickupTime ? `?pickupTime=${encodeURIComponent(pickupTime)}` : ''
@@ -117,14 +120,21 @@ export default function OrderClient() {
         {locations && (
           <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {locations.map((loc) => (
-              <div key={loc.id} onClick={() => handleLocationPick(loc.id)} className="cursor-pointer">
-                <Card className="transition-colors hover:border-primary">
-                  <h2 className="font-semibold text-text">{loc.name}</h2>
-                  <p className="mt-1 text-sm text-text-secondary">
-                    {loc.address}, {loc.city}
-                  </p>
-                </Card>
-              </div>
+              <Card key={loc.id} className="relative cursor-pointer transition-colors hover:border-primary focus-within:border-primary">
+                <h2 className="font-semibold text-text">
+                  <button
+                    type="button"
+                    onClick={() => handleLocationPick(loc.id)}
+                    aria-describedby={`loc-${loc.id}-address`}
+                    className="text-left after:absolute after:inset-0 after:rounded-2xl after:content-['']"
+                  >
+                    {loc.name}
+                  </button>
+                </h2>
+                <p id={`loc-${loc.id}-address`} className="mt-1 text-sm text-text-secondary">
+                  {loc.address}, {loc.city}
+                </p>
+              </Card>
             ))}
           </div>
         )}
@@ -132,13 +142,18 @@ export default function OrderClient() {
     );
   }
 
-  if (loading) {
+  // Full-page spinner only for the FIRST load. A refetch (new pickup time)
+  // used to take this path too, which unmounted the pickup picker while its
+  // dialog was closing — keyboard focus had nowhere to return to and fell back
+  // to the top of the page (WCAG 2.4.3). Now only the menu area is swapped.
+  if (loading && !menuSettled) {
     return (
       <div className="flex justify-center py-20">
-        <Spinner size="lg" />
+        <Spinner size="lg" label="Loading menu…" />
       </div>
     );
   }
+  const refreshing = loading;
 
   const categories = menuData?.categories || [];
   const items = menuData?.items || [];
@@ -152,6 +167,10 @@ export default function OrderClient() {
   function handleAddToCart() {
     if (!selectedItem) return;
     addItem(selectedItem, selectedOptions, 1);
+    // The dialog closes and focus returns to the card, so nothing on screen
+    // near focus says it worked; the header badge changes out of view.
+    const n = itemCount + 1;
+    announce(fmt(n === 1 ? t.a11y.addedToCartOne : t.a11y.addedToCart, { name: selectedItem.name, n }));
     setSelectedItem(null);
     setSelectedOptions([]);
   }
@@ -167,11 +186,11 @@ export default function OrderClient() {
         <div className="space-y-4">
           <p className="text-sm text-text">{t.menu.changeLocationWarn}</p>
           <div className="flex gap-3">
-            <Button variant="outline" className="flex-1" onClick={cancelLocationChange}>
+            <Button type="button" variant="outline" className="flex-1" onClick={cancelLocationChange}>
               {t.menu.keepCurrent}
             </Button>
-            <Button variant="accent" className="flex-1" onClick={confirmLocationChange}>
-              <RefreshCw size={14} /> {t.menu.changeConfirm}
+            <Button type="button" variant="accent" className="flex-1" onClick={confirmLocationChange}>
+              <RefreshCw size={14} aria-hidden="true" /> {t.menu.changeConfirm}
             </Button>
           </div>
         </div>
@@ -182,9 +201,11 @@ export default function OrderClient() {
           <h1 className="text-2xl font-bold text-text">{t.menu.title}</h1>
           {currentLocationName && (
             <div className="mt-0.5 flex items-center gap-2">
-              <MapPin size={14} className="text-primary" />
+              <MapPin size={14} className="text-primary" aria-hidden="true" />
               <span className="text-sm font-medium text-primary-dark">{currentLocationName}</span>
               <button
+                type="button"
+                aria-label={`${t.menu.change}: ${t.menu.chooseLocation}`}
                 onClick={() => {
                   if (itemCount === 0) setLocation(null);
                   setLocationParam(null);
@@ -197,11 +218,9 @@ export default function OrderClient() {
           )}
         </div>
         {itemCount > 0 && (
-          <Link href="/cart">
-            <Button variant="accent" size="md">
-              <ShoppingBag size={16} />
-              {t.nav.cart} ({itemCount}) &middot; {formatCurrency(total)}
-            </Button>
+          <Link href="/cart" className={buttonVariants({ variant: 'accent', size: 'md' })}>
+            <ShoppingBag size={16} aria-hidden="true" />
+            {t.nav.cart} ({itemCount}) &middot; {formatCurrency(total)}
           </Link>
         )}
       </div>
@@ -217,8 +236,14 @@ export default function OrderClient() {
         </div>
       )}
 
+      {refreshing && (
+        <div className="flex justify-center py-20">
+          <Spinner size="lg" label="Loading menu…" />
+        </div>
+      )}
+
       {/* Nothing bookable at the chosen time — show why instead of an empty menu. */}
-      {menuError && (
+      {!refreshing && menuError && (
         <EmptyState
           icon={Clock}
           title="No menu at that pickup time"
@@ -226,11 +251,13 @@ export default function OrderClient() {
         />
       )}
 
-      {categories.length > 0 && (
-        <div className="mb-6 flex gap-2 overflow-x-auto pb-3">
+      {!refreshing && categories.length > 0 && (
+        <div role="group" aria-label={t.a11y.categories} className="mb-6 flex gap-2 overflow-x-auto pb-3">
           {categories.map((cat) => (
             <button
               key={cat.id}
+              type="button"
+              aria-pressed={activeCategory === cat.id}
               onClick={() => setActiveCategory(cat.id)}
               className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition-colors ${
                 activeCategory === cat.id
@@ -244,38 +271,50 @@ export default function OrderClient() {
         </div>
       )}
 
-      {filteredItems.length === 0 ? (
+      {refreshing ? null : filteredItems.length === 0 ? (
         <EmptyState title={t.menu.noItems} description={t.menu.noItemsDesc} />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filteredItems.map((item) => (
             <Card
               key={item.id}
-              className="cursor-pointer transition-colors hover:border-primary/40"
-              onClick={() => {
-                setSelectedItem(item);
-                setSelectedOptions([]);
-              }}
+              className="relative cursor-pointer transition-colors hover:border-primary/40 focus-within:border-primary/40"
             >
               {/* 4:3 of the card width rather than a fixed height. At the 2-up
                   breakpoint a card is ~480px wide, so the old h-32 letterboxed
                   every photo to roughly 3.75:1 and cropped the food out. */}
               <div className="mb-3 flex aspect-[4/3] items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-primary-light to-primary/10">
                 {item.image_url ? (
+                  // alt="": the product name is the heading right below, so
+                  // repeating it here would make screen readers read it twice.
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={item.image_url} alt={item.name} className="h-full w-full object-cover" loading="lazy" />
+                  <img src={item.image_url} alt="" className="h-full w-full object-cover" loading="lazy" />
                 ) : (
-                  <span className="text-4xl">🥐</span>
+                  <span className="text-4xl" aria-hidden="true">🥐</span>
                 )}
               </div>
-              <h3 className="font-semibold text-text">{item.name}</h3>
+              <h2 className="font-semibold text-text">{item.name}</h2>
               {item.description && (
                 <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{item.description}</p>
               )}
               <div className="mt-3 flex items-center justify-between">
                 <span className="text-lg font-bold text-primary-dark">{formatCurrency(item.price)}</span>
-                <Button variant="primary" size="sm">
-                  <Plus size={14} /> {t.menu.add}
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  aria-label={fmt(t.a11y.addItem, { name: item.name })}
+                  aria-haspopup="dialog"
+                  onClick={() => {
+                    setSelectedItem(item);
+                    setSelectedOptions([]);
+                  }}
+                  // active:scale-100 — a transform would make this button the
+                  // containing block for its ::after mid-click, shrinking the
+                  // card-wide hit area under the pointer and losing the click.
+                  className="active:scale-100 after:absolute after:inset-0 after:rounded-2xl after:content-['']"
+                >
+                  <Plus size={14} aria-hidden="true" /> {t.menu.add}
                 </Button>
               </div>
             </Card>
@@ -288,25 +327,26 @@ export default function OrderClient() {
           <div className="space-y-4">
             <div className="flex aspect-[4/3] max-h-[40vh] items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-primary-light to-primary/10">
               {selectedItem.image_url ? (
+                // alt="": the dialog title already names the product.
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={selectedItem.image_url} alt={selectedItem.name} className="h-full w-full object-cover" />
+                <img src={selectedItem.image_url} alt="" className="h-full w-full object-cover" />
               ) : (
-                <span className="text-6xl">🥐</span>
+                <span className="text-6xl" aria-hidden="true">🥐</span>
               )}
             </div>
             {selectedItem.description && <p className="text-sm text-text-secondary">{selectedItem.description}</p>}
             <p className="text-xl font-bold text-primary-dark">{formatCurrency(selectedItem.price)}</p>
 
             {getItemOptions(selectedItem.id).map((opt) => (
-              <div key={opt.id}>
-                <h4 className="mb-2 text-sm font-medium text-text">
+              <fieldset key={opt.id}>
+                <legend className="mb-2 text-sm font-medium text-text">
                   {opt.name}
                   {opt.is_required ? (
                     <Badge status="PREPARING" className="ml-2">
                       {t.menu.required}
                     </Badge>
                   ) : null}
-                </h4>
+                </legend>
                 <div className="space-y-1">
                   {getOptionValues(opt.id).map((val) => (
                     <label
@@ -323,15 +363,17 @@ export default function OrderClient() {
                         <span className="text-sm text-text">{val.name}</span>
                       </div>
                       {val.price_modifier > 0 && (
-                        <span className="text-sm text-text-secondary">+{formatCurrency(val.price_modifier)}</span>
+                        <span className="text-sm text-text-secondary">
+                          <span className="sr-only">, </span>+{formatCurrency(val.price_modifier)}
+                        </span>
                       )}
                     </label>
                   ))}
                 </div>
-              </div>
+              </fieldset>
             ))}
 
-            <Button variant="accent" className="w-full" size="lg" onClick={handleAddToCart}>
+            <Button type="button" variant="accent" className="w-full" size="lg" onClick={handleAddToCart}>
               {t.menu.addToCart} &middot;{' '}
               {formatCurrency(
                 selectedItem.price + selectedOptions.reduce((s, o) => s + (o.price_modifier || 0), 0),
