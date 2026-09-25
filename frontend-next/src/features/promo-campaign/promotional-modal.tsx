@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { X } from 'lucide-react';
 import { api } from '@/lib/api/client';
+import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import type { ActivePromoCampaign, PromoFrequency } from '@/features/promo-campaign/types';
 
 const STORAGE_KEY = 'rollecito_promo_seen';
@@ -57,6 +58,7 @@ function markSeen(campaignId: number, frequency: PromoFrequency): void {
 export default function PromotionalModal() {
   const [campaign, setCampaign] = useState<ActivePromoCampaign | null>(null);
   const [open, setOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,18 +85,20 @@ export default function PromotionalModal() {
     if (campaign) markSeen(campaign.id, campaign.frequency);
   }, [campaign]);
 
-  // Escape to dismiss, and hold the background still while the modal is up.
+  // Hold the background still while the modal is up.
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('keydown', onKey);
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
-      document.removeEventListener('keydown', onKey);
       document.body.style.overflow = previous;
     };
-  }, [open, close]);
+  }, [open]);
+
+  // Focus in on open, Tab kept inside, Escape to dismiss, focus back on close.
+  // It opens on its own over the landing page, so without this a keyboard
+  // user kept tabbing through the page hidden behind it.
+  useDialogFocus(open && !!campaign, panelRef, close);
 
   if (!open || !campaign) return null;
 
@@ -104,15 +108,20 @@ export default function PromotionalModal() {
   const alt = campaign.image_alt?.trim() || campaign.name;
 
   return (
+    // Backdrop click closes (only a click on the backdrop itself, so the
+    // dialog needs no stopPropagation handler). Keyboard users have Escape and
+    // the Close button.
+    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
     <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={campaign.name}
-      onClick={close}
+      onClick={(e) => e.target === e.currentTarget && close()}
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
     >
       <div
-        onClick={(e) => e.stopPropagation()}
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={campaign.name}
+        tabIndex={-1}
         className="relative flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl bg-surface shadow-[var(--shadow-elevated)]"
       >
         <button
@@ -121,7 +130,7 @@ export default function PromotionalModal() {
           aria-label="Close promotion"
           className="absolute right-3 top-3 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur transition-colors hover:bg-black/65"
         >
-          <X size={22} />
+          <X size={22} aria-hidden="true" />
         </button>
 
         {/* The image is the content. <picture> so a vertical, Instagram-shaped
@@ -156,7 +165,7 @@ export default function PromotionalModal() {
             <Link
               href={campaign.button_url}
               onClick={close}
-              className="flex min-h-[56px] w-full items-center justify-center rounded-2xl bg-accent px-6 text-lg font-bold text-text-inverse shadow-[var(--shadow-warm)] transition-colors hover:bg-accent-hover active:scale-[0.99]"
+              className="flex min-h-[56px] w-full items-center justify-center rounded-2xl bg-accent px-6 text-lg font-bold text-primary-dark shadow-[var(--shadow-warm)] transition-colors hover:bg-accent-hover hover:text-text-inverse active:scale-[0.99]"
             >
               {campaign.button_text}
             </Link>

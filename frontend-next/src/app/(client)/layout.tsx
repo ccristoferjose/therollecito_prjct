@@ -2,6 +2,7 @@ import { LangProvider } from '@/providers/lang-provider';
 import { ClientAuthProvider } from '@/providers/client-auth-provider';
 import { CartProvider } from '@/providers/cart-provider';
 import { PickupProvider } from '@/providers/pickup-provider';
+import { AnnouncerProvider } from '@/providers/announcer-provider';
 import ClientChrome from '@/components/layout/client-chrome';
 
 /**
@@ -18,7 +19,9 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           {/* Inside CartProvider: pickup revalidation reads the cart's items
               and location to check them against the selected pickup time. */}
           <PickupProvider>
-            <ClientChrome>{children}</ClientChrome>
+            <AnnouncerProvider>
+              <ClientChrome>{children}</ClientChrome>
+            </AnnouncerProvider>
           </PickupProvider>
         </CartProvider>
       </ClientAuthProvider>

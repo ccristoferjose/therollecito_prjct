@@ -11,7 +11,7 @@ import { useFetch } from '@/lib/hooks/use-fetch';
 import { api, ApiError } from '@/lib/api/client';
 import { formatCurrency, formatDate, formatOrderNumber } from '@/lib/utils/format';
 import Card from '@/components/ui/card';
-import Button from '@/components/ui/button';
+import Button, { buttonVariants } from '@/components/ui/button';
 import Badge from '@/components/ui/badge';
 import Modal from '@/components/ui/modal';
 import Spinner from '@/components/ui/spinner';
@@ -126,15 +126,15 @@ export default function ProfilePage() {
         <h1 className="mb-6 text-2xl font-bold text-text">{t.profile.title}</h1>
         <Card className="py-12 text-center">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary-light">
-            <User size={32} className="text-primary" />
+            <User size={32} className="text-primary" aria-hidden="true" />
           </div>
           <h2 className="text-lg font-semibold text-text">{t.profile.signIn}</h2>
           <p className="mx-auto mt-1 max-w-sm text-sm text-text-secondary">{t.profile.signInDesc}</p>
           {authError && (
-            <div className="mt-4 rounded-lg border border-error/20 bg-red-50 p-3 text-sm text-error">{authError}</div>
+            <div role="alert" className="mt-4 rounded-lg border border-error/20 bg-red-50 p-3 text-sm text-error-text">{authError}</div>
           )}
           <Button variant="primary" size="lg" className="mt-6" onClick={handleSignIn} disabled={signingIn}>
-            <svg className="h-5 w-5" viewBox="0 0 24 24">
+            <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4" />
               <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
               <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
@@ -161,18 +161,18 @@ export default function ProfilePage() {
           <img src={firebaseUser.photoURL} alt="" className="h-14 w-14 rounded-full" referrerPolicy="no-referrer" />
         ) : (
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary-light">
-            <User size={28} className="text-primary" />
+            <User size={28} className="text-primary" aria-hidden="true" />
           </div>
         )}
         <div className="min-w-0 flex-1">
           <p className="truncate font-semibold text-text">{firebaseUser?.displayName || user?.first_name as string | undefined}</p>
           <div className="flex items-center gap-1.5 text-sm text-text-secondary">
-            <Mail size={14} />
+            <Mail size={14} aria-hidden="true" />
             <span className="truncate">{firebaseUser?.email}</span>
           </div>
         </div>
         <Button variant="ghost" size="sm" onClick={signOut} className="shrink-0" aria-label="Sign out">
-          <LogOut size={16} />
+          <LogOut size={16} aria-hidden="true" />
         </Button>
       </Card>
 
@@ -191,7 +191,7 @@ export default function ProfilePage() {
       {activeOrders.length > 0 && (
         <div className="mt-8">
           <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold text-text">
-            <span className="relative flex h-2.5 w-2.5">
+            <span aria-hidden="true" className="relative flex h-2.5 w-2.5">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
               <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary" />
             </span>
@@ -202,7 +202,7 @@ export default function ProfilePage() {
               <Link key={order.id} href={`/track/${order.tracking_code}`}>
                 <Card className="flex cursor-pointer items-center gap-4 border-primary/30 bg-primary-light/20 transition-colors hover:border-primary/50">
                   <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary-light">
-                    <ShoppingBag size={20} className="text-primary" />
+                    <ShoppingBag size={20} className="text-primary" aria-hidden="true" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
@@ -211,15 +211,15 @@ export default function ProfilePage() {
                     </div>
                     <div className="mt-0.5 flex items-center gap-3 text-xs text-text-secondary">
                       <span className="flex items-center gap-1">
-                        <MapPin size={10} />
+                        <MapPin size={10} aria-hidden="true" />
                         {order.location_name}
                       </span>
                       <span>{formatCurrency(order.total_amount)}</span>
                     </div>
                   </div>
-                  <Button variant="primary" size="sm" className="shrink-0">
+                  <span aria-hidden="true" className={buttonVariants({ variant: 'primary', size: 'sm', className: 'shrink-0' })}>
                     {t.tracking.trackOrder}
-                  </Button>
+                  </span>
                 </Card>
               </Link>
             ))}
@@ -239,7 +239,7 @@ export default function ProfilePage() {
             You&apos;ll be able to edit the cart before checking out.
           </p>
           <div className="flex gap-2">
-            <Button variant="outline" className="flex-1" onClick={() => setReorderConfirm(null)} disabled={reordering}>
+            <Button type="button" variant="outline" className="flex-1" onClick={() => setReorderConfirm(null)} disabled={reordering}>
               Keep current cart
             </Button>
             <Button
@@ -248,41 +248,47 @@ export default function ProfilePage() {
               onClick={() => reorderConfirm && performReorder(reorderConfirm.order)}
               disabled={reordering}
             >
-              <RotateCcw size={14} />
+              <RotateCcw size={14} aria-hidden="true" />
               {reordering ? 'Reordering...' : 'Replace & reorder'}
             </Button>
           </div>
         </div>
       </Modal>
 
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-50 max-w-sm rounded-lg border border-border bg-white px-4 py-3 shadow-lg">
-          <div className="flex items-start gap-2">
-            <CheckCircle size={18} className="mt-0.5 shrink-0 text-green-600" />
-            <p className="text-sm text-text">{toast.message}</p>
+      <div role="status" aria-live="polite">
+        {toast && (
+          <div className="fixed bottom-6 right-6 z-50 max-w-sm rounded-lg border border-border bg-white px-4 py-3 shadow-lg">
+            <div className="flex items-start gap-2">
+              <CheckCircle size={18} className="mt-0.5 shrink-0 text-green-600" aria-hidden="true" />
+              <p className="text-sm text-text">{toast.message}</p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {pastOrders.length > 0 && (
         <div className="mt-8">
           <h2 className="mb-3 text-lg font-semibold text-text">{t.profile.recentOrders}</h2>
           <div className="space-y-3">
             {pastOrders.map((order) => (
-              <Link key={order.id} href={`/track/${order.tracking_code}`}>
-                <Card className="flex cursor-pointer items-center gap-4 transition-colors hover:border-primary/40">
+                <Card key={order.id} className="relative flex cursor-pointer items-center gap-4 transition-colors hover:border-primary/40 focus-within:border-primary/40">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-100">
-                    <ShoppingBag size={18} className="text-text-secondary" />
+                    <ShoppingBag size={18} className="text-text-secondary" aria-hidden="true" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium text-text">{formatOrderNumber(order)}</span>
+                      <Link
+                        href={`/track/${order.tracking_code}`}
+                        className="font-medium text-text after:absolute after:inset-0 after:rounded-2xl after:content-['']"
+                      >
+                        {formatOrderNumber(order)}
+                      </Link>
                       <Badge status={order.status_name}>{order.status_name}</Badge>
                     </div>
                     <div className="mt-0.5 flex items-center gap-3 text-xs text-text-secondary">
                       <span>{order.location_name}</span>
                       <span className="flex items-center gap-1">
-                        <Clock size={10} />
+                        <Clock size={10} aria-hidden="true" />
                         {order.created_at && formatDate(order.created_at)}
                       </span>
                     </div>
@@ -290,13 +296,20 @@ export default function ProfilePage() {
                   <span className="shrink-0 text-sm font-semibold text-text-secondary">
                     {formatCurrency(order.total_amount)}
                   </span>
-                  <Button variant="outline" size="sm" onClick={(e) => handleReorderClick(e, order)} disabled={reordering} className="shrink-0">
-                    <RotateCcw size={14} />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => handleReorderClick(e, order)}
+                    disabled={reordering}
+                    aria-label={`Reorder ${formatOrderNumber(order)}`}
+                    className="relative z-10 shrink-0"
+                  >
+                    <RotateCcw size={14} aria-hidden="true" />
                     Reorder
                   </Button>
-                  <ChevronRight size={16} className="shrink-0 text-text-secondary" />
+                  <ChevronRight size={16} className="shrink-0 text-text-secondary" aria-hidden="true" />
                 </Card>
-              </Link>
             ))}
           </div>
         </div>

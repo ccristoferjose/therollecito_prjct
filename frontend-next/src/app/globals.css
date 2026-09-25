@@ -34,6 +34,14 @@
   --color-success: #6B8E4E;
   --color-warning: #E9A84C;
   --color-error: #E76F51;
+  /* Text-safe status shades (WCAG 1.4.3). --color-error and --color-warning
+     are fills/borders: as text on white they measure 3.09:1 and 2.06:1, below
+     the 4.5:1 AA minimum. Use these for error and warning MESSAGES only. */
+  --color-error-text: #B3401F;
+  --color-warning-text: #8A5A12;
+  /* Orange text on light fills: --color-accent-hover measures 2.56:1 on the
+     accent-tinted pill background; this shade of the same hue is 5.15:1. */
+  --color-accent-text: #B3401F;
 
   /* Fonts — rounded sans-serif family (Nunito provided via next/font) */
   --font-sans: var(--font-nunito), 'Nunito', 'Quicksand', ui-rounded, 'Inter', system-ui, sans-serif;
@@ -55,6 +63,37 @@ body {
 
 html {
   scroll-behavior: smooth;
+}
+
+/* Keyboard focus indicator (WCAG 2.4.7 / 1.4.11).
+   Unlayered on purpose: Tailwind utilities live in @layer utilities, so this
+   beats any `focus:outline-none` on a control that never supplied a visible
+   replacement. :focus-visible means mouse and touch users see no change.
+   Two tones — a dark outline over a cream gap — so the ring stays visible on
+   the cream page, on white cards and on the dark footer alike.
+   Text-entry fields are excluded: they already show a primary-coloured border
+   on focus (4.35:1 against white, above the 3:1 non-text minimum). So are
+   tabindex="-1" targets (<main> after "Skip to content", a dialog panel):
+   they receive focus programmatically and are not controls. */
+:focus-visible:not(input, textarea, select, [tabindex="-1"]) {
+  outline: 3px solid var(--color-primary-dark);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--color-background);
+}
+
+/* Honour the OS "reduce motion" setting (WCAG 2.3.3, and vestibular comfort):
+   stop the floating mascot and the hover lifts, and drop smooth scrolling. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Soft float animation for the hero mascot */

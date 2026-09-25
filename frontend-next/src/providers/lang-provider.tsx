@@ -12,7 +12,18 @@ interface LangContextValue {
 
 const LangContext = createContext<LangContextValue | null>(null);
 
-export function LangProvider({ children }: { children: React.ReactNode }) {
+export function LangProvider({
+  children,
+  syncDocumentLang = true,
+}: {
+  children: React.ReactNode;
+  /**
+   * Mirror the chosen language onto <html lang> (WCAG 3.1.1) so screen readers
+   * switch pronunciation. Turn off where only part of the page is translated;
+   * that part must then carry its own `lang` attribute.
+   */
+  syncDocumentLang?: boolean;
+}) {
   // Default on server + first client render (SSR-safe); hydrate after mount.
   const [lang, setLangState] = useState<Lang>(defaultLang);
 
@@ -20,15 +31,15 @@ export function LangProvider({ children }: { children: React.ReactNode }) {
     const saved = window.localStorage.getItem('lang');
     if (saved && saved in translations) {
       setLangState(saved as Lang);
-      document.documentElement.lang = saved;
+      if (syncDocumentLang) document.documentElement.lang = saved;
     }
-  }, []);
+  }, [syncDocumentLang]);
 
   const setLang = useCallback((newLang: Lang) => {
     setLangState(newLang);
     window.localStorage.setItem('lang', newLang);
-    document.documentElement.lang = newLang;
-  }, []);
+    if (syncDocumentLang) document.documentElement.lang = newLang;
+  }, [syncDocumentLang]);
 
   const toggle = useCallback(() => {
     setLang(lang === 'en' ? 'es' : 'en');

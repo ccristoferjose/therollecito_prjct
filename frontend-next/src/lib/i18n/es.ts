@@ -71,6 +71,9 @@ const es = {
     hours: 'Horario',
     hoursValue: 'Lun \u2013 Dom \u00b7 7 AM \u2013 7 PM',
     rights: 'Todos los derechos reservados.',
+    legal: 'Legal',
+    privacy: 'Pol\u00edtica de Privacidad',
+    accessibility: 'Accesibilidad',
   },
 
   // Locations page
@@ -122,6 +125,7 @@ const es = {
     orderDetails: 'Detalles del Pedido',
     specialInstructions: 'Instrucciones Especiales',
     specialPlaceholder: 'Alergias, peticiones especiales...',
+    optional: '(opcional)',
     orderSummary: 'Resumen del Pedido',
     total: 'Total',
     placeOrder: 'Realizar Pedido',
@@ -174,6 +178,25 @@ const es = {
     trackOrder: 'Rastrear Pedido',
     recentOrders: 'Tus Pedidos Recientes',
     lookupHint: '\u00bfTienes un c\u00f3digo de rastreo? Ingr\u00e9salo abajo.',
+  },
+
+  // Screen-reader-only text and status announcements
+  a11y: {
+    skipToContent: 'Saltar al contenido principal',
+    mainNav: 'Principal',
+    footerNav: 'Pie de p\u00e1gina',
+    opensInNewTab: '(se abre en una pesta\u00f1a nueva)',
+    cartCount: '{n} art\u00edculos en el carrito',
+    cartCountOne: '1 art\u00edculo en el carrito',
+    addedToCart: '{name} agregado al carrito. {n} art\u00edculos en el carrito.',
+    addedToCartOne: '{name} agregado al carrito. 1 art\u00edculo en el carrito.',
+    removedFromCart: '{name} eliminado del carrito.',
+    quantityChanged: '{name}: cantidad {n}.',
+    decreaseQuantity: 'Disminuir la cantidad de {name}',
+    increaseQuantity: 'Aumentar la cantidad de {name}',
+    removeItem: 'Eliminar {name} del carrito',
+    addItem: 'Agregar {name}',
+    categories: 'Categor\u00edas del men\u00fa',
   },
 
   // Language

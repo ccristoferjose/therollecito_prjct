@@ -42,43 +42,64 @@ services:
       retries: 10
 
   # ---------------------------------------------------------------------------
-  # MinIO — S3-compatible object storage for LOCAL DEV ONLY.
+  # Local S3 — S3-compatible object storage for LOCAL DEV ONLY.
   # Stands in for AWS S3 so image uploads never touch a real AWS account.
+  #
+  # Runs RustFS (Apache-2.0, MinIO-compatible API). MinIO stopped publishing
+  # its community images: minio/minio and minio/mc no longer exist on Docker
+  # Hub or quay.io, so `docker compose up` failed with "pull access denied".
+  # The service keeps the name `minio`, the ports and the minioadmin
+  # credentials, so backend/.env, S3_ENDPOINT=http://minio:9000 and the Next
+  # image config need no changes.
   #   :9000 = S3 API (the backend talks to this)
   #   :9001 = web console (http://localhost:9001, login minioadmin/minioadmin)
+  #
+  # Images pinned to exact versions so an upstream registry change cannot
+  # break local dev again without a visible diff.
   # ---------------------------------------------------------------------------
   minio:
-    image: minio/minio
+    image: rustfs/rustfs:1.0.0
     restart: unless-stopped
-    command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      RUSTFS_ACCESS_KEY: minioadmin
+      RUSTFS_SECRET_KEY: minioadmin
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - minio_data:/data
+      # New volume: the old `minio_data` volume is in MinIO's on-disk format.
+      # It is left in place (not deleted); re-upload dev images from the admin.
+      - s3_data:/data
 
   # ---------------------------------------------------------------------------
-  # One-shot: wait for MinIO, create the dev bucket, make it publicly readable.
-  # The bucket must allow anonymous downloads because uploaded images are
-  # served straight to the browser via <img src> (the app sets no per-object
-  # ACL). Exits 0 once done; safe to re-run (idempotent).
+  # One-shot: wait for the S3 server, create the dev bucket, make its objects
+  # publicly readable. Anonymous reads are required because uploaded images
+  # are served straight to the browser via <img src> (the app sets no
+  # per-object ACL). Anonymous writes and bucket listing stay denied.
+  # Exits 0 once done; safe to re-run (idempotent).
   # ---------------------------------------------------------------------------
   minio-setup:
-    image: minio/mc
+    image: amazon/aws-cli:2.37.3
     depends_on:
       - minio
-    entrypoint: >
-      /bin/sh -c "
-      until mc alias set local http://minio:9000 minioadmin minioadmin; do
-        echo 'waiting for minio...'; sleep 1;
-      done &&
-      mc mb --ignore-existing local/the-rollecito-dev &&
-      mc anonymous set download local/the-rollecito-dev &&
-      echo 'MinIO bucket the-rollecito-dev ready (public read).'
-      "
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        S3="aws --endpoint-url http://minio:9000"
+        until $$S3 s3api list-buckets >/dev/null 2>&1; do
+          echo 'waiting for local S3...'; sleep 1
+        done
+        $$S3 s3api head-bucket --bucket the-rollecito-dev 2>/dev/null \
+          || $$S3 s3api create-bucket --bucket the-rollecito-dev
+        $$S3 s3api put-bucket-policy --bucket the-rollecito-dev --policy '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::the-rollecito-dev/*"]}]}'
+        echo 'Local S3 bucket the-rollecito-dev ready (public read).'
 
   # ---------------------------------------------------------------------------
   # Backend (Node.js + Express)
@@ -108,7 +129,9 @@ services:
       DB_PASSWORD: admin123
       DB_NAME: restaurant_ordering
       DB_CONNECTION_LIMIT: 10
-      CORS_ORIGIN: http://localhost:5173
+      # The Next app's origin. Only Socket.IO checks it: /api calls reach the
+      # backend server-to-server through the Next proxy.
+      CORS_ORIGIN: http://localhost:3000
       # S3 → local MinIO. Inside the compose network MinIO is reachable as
       # `minio`, so override the .env value (which uses localhost for
       # bare-metal dev). S3_PUBLIC_URL_BASE stays localhost (from .env) so the
@@ -123,40 +146,44 @@ services:
         condition: service_started
 
   # ---------------------------------------------------------------------------
-  # Frontend (Vite dev server)
-  # Hot-reloads from the host bind-mount. Proxies /api and /socket.io
-  # to the backend service over the Docker network.
+  # Frontend (Next.js dev server) — frontend-next/, the production app.
+  # Hot-reloads from the host bind-mount. Visit http://localhost:3000.
+  #
+  # The browser calls a relative /api, which the Next server proxies to the
+  # backend over the compose network (BACKEND_ORIGIN, rewrite in
+  # next.config.ts). Socket.IO cannot go through that rewrite, so the browser
+  # connects straight to the backend's published port.
+  #
+  # The legacy Vite app (frontend/) is no longer started here. Run it
+  # directly with `npm run dev` in frontend/ if you ever need it.
   # ---------------------------------------------------------------------------
   frontend:
-    build: ./frontend
+    build: ./frontend-next
     restart: unless-stopped
     ports:
-      - "5173:5173"
+      - "3000:3000"
     volumes:
-      # Bind-mount ONLY source for HMR — we deliberately do NOT mount
-      # /app or /app/node_modules from the host, so the image's native
-      # linux binaries (rollup etc.) stay intact. When you change a
-      # package.json dep, rerun `docker compose up --build`.
-      - ./frontend/src:/app/src
-      - ./frontend/public:/app/public
-      - ./frontend/index.html:/app/index.html
-      - ./frontend/vite.config.js:/app/vite.config.js
-      # .env is .dockerignored so it's never baked in — bind-mount the live
-      # file so VITE_* changes are picked up after a container restart
-      # (Vite reads .env at dev-server startup, not on file change).
-      - ./frontend/.env:/app/.env:ro
+      # Bind-mount source only, for HMR. node_modules and .next stay inside
+      # the image so its linux native binaries are never replaced by the
+      # host's macOS ones. After a package.json change: `docker compose up --build`.
+      - ./frontend-next/src:/app/src
+      - ./frontend-next/public:/app/public
+      - ./frontend-next/next.config.ts:/app/next.config.ts
+      # .env*.local is .dockerignored, so it is never baked into the image.
+      # Holds the NEXT_PUBLIC_FIREBASE_* web config (copy .env.example).
+      - ./frontend-next/.env.local:/app/.env.local:ro
     environment:
-      VITE_PROXY_TARGET: http://backend:3001
-      CHOKIDAR_USEPOLLING: "true"
+      # Server side: SSR fetches and the /api rewrite reach the backend here.
+      BACKEND_ORIGIN: http://backend:3001
+      # Browser side: relative /api (proxied above); sockets hit the host port.
+      NEXT_PUBLIC_API_URL: ""
+      NEXT_PUBLIC_SOCKET_URL: http://localhost:3001
+      NEXT_PUBLIC_SITE_URL: http://localhost:3000
+      # File-watch polling so HMR sees edits through the bind mount.
+      WATCHPACK_POLLING: "true"
     depends_on:
       - backend
 
-  # NOTE: frontend-next/ (Next.js 15) is a future rewrite that is NOT in active
-  # development and is NOT production. It is deliberately absent from this file
-  # and from docker-compose.prod.yml. The Vite `frontend` service above is the
-  # production app. Run the Next app directly with `npm run dev` in
-  # frontend-next/ if you need it; do not add it back here until it ships.
-
 volumes:
   mysql_data:
-  minio_data:
+  s3_data:

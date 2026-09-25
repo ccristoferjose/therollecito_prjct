@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import Image from 'next/image';
-import { ArrowRight, Clock, MapPin, ShieldCheck, Sparkles, Heart, Leaf, Star, Sunrise, Sandwich, CalendarClock, Code2, Mail } from 'lucide-react';
+import { ArrowRight, Clock, MapPin, ShieldCheck, Sparkles, Heart, Leaf, Star, Sunrise, Sandwich, CalendarClock } from 'lucide-react';
 import en from '@/lib/i18n/en';
 import { getLocations } from '@/features/locations/queries';
 import { getMenuForLocation } from '@/features/menu/queries';
@@ -144,7 +144,7 @@ export default async function LandingPage() {
         <section className="border-y border-[#F2D6B3] bg-surface">
           <div className="mx-auto max-w-6xl px-4 py-16">
             <div className="mb-10 text-center">
-              <span className="inline-flex items-center gap-2 rounded-full bg-accent/15 px-4 py-1.5 text-sm font-semibold text-accent-hover">
+              <span className="inline-flex items-center gap-2 rounded-full bg-accent/15 px-4 py-1.5 text-sm font-semibold text-accent-text">
                 <CalendarClock size={14} />
                 Two menus, one kitchen
               </span>
@@ -217,16 +217,17 @@ export default async function LandingPage() {
                     className="group flex flex-col rounded-3xl bg-[#F2D6B3] p-5 shadow-[var(--shadow-card)] transition-all duration-300 hover:-translate-y-1 hover:shadow-[var(--shadow-elevated)]"
                   >
                     <div className="relative flex h-40 items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-[#F4A261]/60 to-[#D98C5F]/50">
+                      {/* alt="": the product name is the heading just below. */}
                       {item.image_url ? (
                         <Image
                           src={item.image_url}
-                          alt={item.name}
+                          alt=""
                           fill
                           sizes="(max-width: 768px) 100vw, 25vw"
                           className="object-cover transition-transform duration-500 group-hover:scale-105"
                         />
                       ) : (
-                        <span className="text-6xl">🥐</span>
+                        <span className="text-6xl" aria-hidden="true">🥐</span>
                       )}
                     </div>
                     <h3 className="mt-4 line-clamp-1 text-lg font-bold text-primary-dark">{item.name}</h3>
@@ -241,13 +242,13 @@ export default async function LandingPage() {
                         href="/order"
                         className="rounded-full bg-primary-dark px-4 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-hover"
                       >
-                        Order
+                        Order<span className="sr-only"> {item.name}</span>
                       </Link>
                     </div>
                   </article>
                 ))
               : Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="h-72 animate-pulse rounded-3xl bg-[#F2D6B3]/60" />
+                  <div key={i} aria-hidden="true" className="h-72 animate-pulse rounded-3xl bg-[#F2D6B3]/60" />
                 ))}
           </div>
           <div className="mt-10 text-center">
@@ -263,7 +264,11 @@ export default async function LandingPage() {
       </section>
 
       {/* ABOUT + features */}
-      <section id="about" className="bg-[#FFF1DC]">
+      {/* overflow-x-clip: the rotated card behind the mascot reaches ~9px past
+          the viewport edge, which made the whole page scroll sideways on
+          phones and at 200% zoom (WCAG 1.4.10). The clipped sliver was already
+          off-screen, so nothing visible changes. */}
+      <section id="about" className="overflow-x-clip bg-[#FFF1DC]">
         <div className="mx-auto max-w-6xl px-4 py-20">
           <div className="grid gap-12 lg:grid-cols-2 lg:items-center">
             <div className="relative">
@@ -328,6 +333,7 @@ export default async function LandingPage() {
                   {[0, 1, 2, 3, 4].map((i) => (
                     <Star key={i} size={16} className="fill-accent" />
                   ))}
+                  <span className="sr-only">5 out of 5 stars</span>
                 </div>
                 <blockquote className="mt-4 flex-1 leading-relaxed text-primary-dark/85">
                   &ldquo;{item.quote}&rdquo;
@@ -364,58 +370,6 @@ export default async function LandingPage() {
         </div>
       </section>
 
-      {/* BUILT-BY / platform pitch. Sits after the customer CTA so it never
-          competes with "Start your order" — this speaks to a different reader. */}
-      <section className="border-t border-[#F2D6B3] bg-[#FFF1DC]">
-        <div className="mx-auto max-w-4xl px-4 py-16 text-center">
-          <span className="inline-flex items-center gap-2 rounded-full bg-primary-dark/10 px-4 py-1.5 text-sm font-semibold text-primary-dark">
-            <Code2 size={14} />
-            For business owners
-          </span>
-          <h2 className="mt-4 text-2xl font-extrabold text-primary-dark sm:text-3xl">
-            Want a platform like The Rollecito for your business?
-          </h2>
-
-          <ul className="mx-auto mt-6 flex max-w-2xl flex-wrap justify-center gap-x-3 gap-y-2 text-sm text-primary-dark/80">
-            {[
-              'Online ordering',
-              'Scheduled pickup',
-              'Payments',
-              'Multiple menus',
-              'Admin dashboard',
-              'Kitchen workflow',
-            ].map((feature) => (
-              <li
-                key={feature}
-                className="rounded-full border border-primary-dark/15 bg-surface px-3.5 py-1.5 font-medium"
-              >
-                {feature}
-              </li>
-            ))}
-          </ul>
-
-          <p className="mt-6 text-sm text-primary-dark/70">
-            Built by <span className="font-semibold text-primary-dark">Christtopher Chitay</span>
-          </p>
-
-          <div className="mt-7 flex flex-wrap justify-center gap-3">
-            <a
-              href="mailto:chris.chitay@gmail.com?subject=Demo%20request%20%E2%80%94%20ordering%20platform&body=Hi%20Christtopher%2C%0A%0AI%20saw%20The%20Rollecito%20and%20would%20like%20a%20demo%20for%20my%20business.%0A%0ABusiness%3A%0ALocations%3A%0ABest%20time%20to%20talk%3A%0A"
-              className="inline-flex items-center gap-2 rounded-full bg-primary px-7 py-3.5 text-base font-semibold text-text-inverse shadow-[var(--shadow-warm)] transition-colors hover:bg-accent-hover"
-            >
-              Request a Demo
-              <ArrowRight size={18} />
-            </a>
-            <a
-              href="mailto:chris.chitay@gmail.com"
-              className="inline-flex items-center gap-2 rounded-full border-2 border-primary-dark px-7 py-3.5 text-base font-semibold text-primary-dark transition-colors hover:bg-primary-dark hover:text-text-inverse"
-            >
-              <Mail size={18} />
-              Contact
-            </a>
-          </div>
-        </div>
-      </section>
     </>
   );
 }

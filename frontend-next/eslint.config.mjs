@@ -7,12 +7,37 @@
 // the supported path and drops the @eslint/eslintrc compat layer entirely.
 import nextCoreWebVitals from 'eslint-config-next/core-web-vitals';
 import nextTypescript from 'eslint-config-next/typescript';
+import jsxA11y from 'eslint-plugin-jsx-a11y';
 
 const eslintConfig = [
   ...nextCoreWebVitals,
   ...nextTypescript,
   {
     ignores: ['.next/**', 'node_modules/**', 'out/**'],
+  },
+  {
+    // Full jsx-a11y recommended set (WCAG 2.2 AA work, docs/compliance/).
+    // eslint-config-next registers the plugin but turns on only six of its
+    // rules; the plugin object is not re-registered here, only its rules.
+    // Static checks catch missing labels, alt text and non-interactive click
+    // handlers; they do not replace keyboard and screen-reader testing.
+    files: ['**/*.{jsx,tsx}'],
+    rules: jsxA11y.flatConfigs.recommended.rules,
+  },
+  {
+    // Staff/admin/kitchen screens were outside the customer-facing scope of
+    // the first accessibility pass. Their existing violations are warnings so
+    // they stay visible without failing lint; tracked as a follow-up in
+    // docs/compliance/accessibility-audit.md. New customer code gets errors.
+    files: [
+      'src/app/(staff)/**',
+      'src/features/{clients,kitchen,menu,staff}/**',
+      'src/features/promo-campaign/campaign-management.tsx',
+      'src/features/service-period/{menu-composition,service-period-management}.tsx',
+    ],
+    rules: Object.fromEntries(
+      Object.keys(jsxA11y.flatConfigs.recommended.rules).map((rule) => [rule, 'warn']),
+    ),
   },
   {
     rules: {

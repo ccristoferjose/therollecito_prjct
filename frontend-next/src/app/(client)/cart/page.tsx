@@ -7,12 +7,14 @@ import {
   Trash2, Minus, Plus, ArrowLeft, ArrowRight, ShoppingBag, AlertTriangle,
 } from 'lucide-react';
 import { useLang } from '@/providers/lang-provider';
+import { useAnnounce } from '@/providers/announcer-provider';
+import { fmt } from '@/lib/i18n';
 import { useCart } from '@/providers/cart-provider';
 import { usePickup } from '@/providers/pickup-provider';
 import PickupPicker from '@/features/service-period/pickup-picker';
 import { formatCurrency } from '@/lib/utils/format';
 import Card from '@/components/ui/card';
-import Button from '@/components/ui/button';
+import Button, { buttonVariants } from '@/components/ui/button';
 import EmptyState from '@/components/ui/empty-state';
 
 export default function CartPage() {
@@ -20,6 +22,19 @@ export default function CartPage() {
   const { items, total, itemCount, updateQuantity, removeItem, locationId } = useCart();
   const { unavailable, isUnavailable, revalidate, validating } = usePickup();
   const router = useRouter();
+  const announce = useAnnounce();
+
+  // Quantity and remove buttons change the cart without moving focus, so say
+  // what happened. Removing the last item replaces the page with the empty
+  // state, whose heading then carries the news.
+  function changeQuantity(key: string, name: string, next: number) {
+    updateQuantity(key, next);
+    announce(next <= 0 ? fmt(t.a11y.removedFromCart, { name }) : fmt(t.a11y.quantityChanged, { name, n: next }));
+  }
+  function remove(key: string, name: string) {
+    removeItem(key);
+    announce(fmt(t.a11y.removedFromCart, { name }));
+  }
 
   // Re-check on arrival and after any cart edit. `revalidate` changes identity
   // when the set of cart item ids changes, so removing a flagged item clears
@@ -38,8 +53,8 @@ export default function CartPage() {
           title={t.cart.empty}
           description={t.cart.emptyDesc}
           action={
-            <Link href="/order">
-              <Button variant="primary">{t.cart.browseMenu}</Button>
+            <Link href="/order" className={buttonVariants({ variant: 'primary' })}>
+              {t.cart.browseMenu}
             </Link>
           }
         />
@@ -50,8 +65,9 @@ export default function CartPage() {
   return (
     <div className="mx-auto max-w-2xl px-4 py-10">
       <div className="mb-6 flex items-center gap-3">
-        <button onClick={() => router.back()} className="text-text-secondary hover:text-text" aria-label="Go back">
-          <ArrowLeft size={20} />
+        {/* -m-1 p-1: a 28px target (WCAG 2.5.8) without moving the icon. */}
+        <button type="button" onClick={() => router.back()} className="-m-1 p-1 text-text-secondary hover:text-text" aria-label="Go back">
+          <ArrowLeft size={20} aria-hidden="true" />
         </button>
         <h1 className="text-2xl font-bold text-text">{t.cart.title}</h1>
         <span className="text-sm text-text-secondary">
@@ -93,16 +109,17 @@ export default function CartPage() {
           >
             <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-primary-light to-primary/10">
               {entry.item.image_url ? (
+                // alt="": the item name is the heading beside it.
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={entry.item.image_url} alt={entry.item.name} className="h-full w-full object-cover" />
+                <img src={entry.item.image_url} alt="" className="h-full w-full object-cover" />
               ) : (
-                <span className="text-2xl">🥐</span>
+                <span className="text-2xl" aria-hidden="true">🥐</span>
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <h3 className="truncate font-medium text-text">{entry.item.name}</h3>
+              <h2 className="truncate font-medium text-text">{entry.item.name}</h2>
               {isUnavailable(entry.item.id) && (
-                <p className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-warning">
+                <p className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-warning-text">
                   <AlertTriangle size={12} aria-hidden="true" />
                   Not available at the selected pickup time
                 </p>
@@ -119,28 +136,36 @@ export default function CartPage() {
                 )}
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            {/* Control names include the product, so a screen-reader user
+                tabbing through several items hears which one each acts on. */}
+            <div role="group" aria-label={entry.item.name} className="flex items-center gap-2">
               <button
-                onClick={() => updateQuantity(entry.key, entry.quantity - 1)}
+                type="button"
+                onClick={() => changeQuantity(entry.key, entry.item.name, entry.quantity - 1)}
                 className="rounded-lg border border-border p-1.5 text-text-secondary hover:bg-gray-50"
-                aria-label="Decrease quantity"
+                aria-label={fmt(t.a11y.decreaseQuantity, { name: entry.item.name })}
               >
-                <Minus size={14} />
+                <Minus size={14} aria-hidden="true" />
               </button>
-              <span className="w-6 text-center text-sm font-medium">{entry.quantity}</span>
+              <span className="w-6 text-center text-sm font-medium">
+                <span className="sr-only">Quantity </span>
+                {entry.quantity}
+              </span>
               <button
-                onClick={() => updateQuantity(entry.key, entry.quantity + 1)}
+                type="button"
+                onClick={() => changeQuantity(entry.key, entry.item.name, entry.quantity + 1)}
                 className="rounded-lg border border-border p-1.5 text-text-secondary hover:bg-gray-50"
-                aria-label="Increase quantity"
+                aria-label={fmt(t.a11y.increaseQuantity, { name: entry.item.name })}
               >
-                <Plus size={14} />
+                <Plus size={14} aria-hidden="true" />
               </button>
               <button
-                onClick={() => removeItem(entry.key)}
-                className="ml-1 rounded-lg p-1.5 text-text-secondary hover:bg-red-50 hover:text-error"
-                aria-label="Remove item"
+                type="button"
+                onClick={() => remove(entry.key, entry.item.name)}
+                className="ml-1 rounded-lg p-1.5 text-text-secondary hover:bg-red-50 hover:text-error-text"
+                aria-label={fmt(t.a11y.removeItem, { name: entry.item.name })}
               >
-                <Trash2 size={14} />
+                <Trash2 size={14} aria-hidden="true" />
               </button>
             </div>
           </Card>
@@ -154,22 +179,28 @@ export default function CartPage() {
         </div>
         {/* Checkout is blocked while flagged items remain — the order would be
             rejected by sp_order_create anyway, so fail here with a reason. */}
+        {/* A disabled <button> inside a <Link> still navigated on Enter.
+            While blocked or validating it is a disabled button; otherwise a
+            single link styled the same. */}
         {hasUnavailable ? (
           <>
-            <Button variant="accent" size="lg" className="mt-4 w-full" disabled>
+            <Button type="button" variant="accent" size="lg" className="mt-4 w-full" disabled aria-describedby="checkout-blocked">
               {t.cart.checkout}
-              <ArrowRight size={18} />
+              <ArrowRight size={18} aria-hidden="true" />
             </Button>
-            <p className="mt-2 text-center text-xs text-text-secondary">
+            <p id="checkout-blocked" className="mt-2 text-center text-xs text-text-secondary">
               Resolve the unavailable items above to continue.
             </p>
           </>
+        ) : validating ? (
+          <Button type="button" variant="accent" size="lg" className="mt-4 w-full" disabled>
+            {t.cart.checkout}
+            <ArrowRight size={18} aria-hidden="true" />
+          </Button>
         ) : (
-          <Link href="/checkout">
-            <Button variant="accent" size="lg" className="mt-4 w-full" disabled={validating}>
-              {t.cart.checkout}
-              <ArrowRight size={18} />
-            </Button>
+          <Link href="/checkout" className={buttonVariants({ variant: 'accent', size: 'lg', className: 'mt-4 w-full' })}>
+            {t.cart.checkout}
+            <ArrowRight size={18} aria-hidden="true" />
           </Link>
         )}
       </Card>
