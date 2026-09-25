@@ -17,9 +17,36 @@ const sizes = {
   lg: 'px-7 py-3.5 text-base',
 } as const;
 
+type Variant = keyof typeof variants;
+type Size = keyof typeof sizes;
+
+/**
+ * Button styling without the <button>. Use it to style a <Link> as a button.
+ *
+ * Wrapping <Button> in <Link> nests one interactive element inside another,
+ * which is invalid HTML: keyboard users hit two tab stops for one action and
+ * screen readers announce a "link, button" pair. A styled link is one control.
+ */
+export function buttonVariants({
+  variant = 'primary',
+  size = 'md',
+  className,
+}: { variant?: Variant; size?: Size; className?: string } = {}) {
+  return cn(
+    'inline-flex items-center justify-center gap-2 rounded-full font-semibold transition-all duration-200',
+    // No focus classes here: the global :focus-visible rule in globals.css
+    // draws the ring. The previous accent/50 ring measured 1.42:1 against
+    // white, under the 3:1 minimum for a focus indicator.
+    'disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]',
+    variants[variant],
+    sizes[size],
+    className,
+  );
+}
+
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: keyof typeof variants;
-  size?: keyof typeof sizes;
+  variant?: Variant;
+  size?: Size;
 }
 
 export default function Button({
@@ -32,14 +59,7 @@ export default function Button({
 }: ButtonProps) {
   return (
     <button
-      className={cn(
-        'inline-flex items-center justify-center gap-2 rounded-full font-semibold transition-all duration-200',
-        'focus:outline-none focus:ring-2 focus:ring-accent/50 focus:ring-offset-2',
-        'disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]',
-        variants[variant],
-        sizes[size],
-        className,
-      )}
+      className={buttonVariants({ variant, size, className })}
       disabled={disabled}
       {...props}
     >

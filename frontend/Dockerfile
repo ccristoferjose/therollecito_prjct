@@ -3,22 +3,26 @@ FROM node:20-slim
 
 WORKDIR /app
 
-# Copy only package.json — see long comment below about why not the lockfile.
-# The host lockfile is from macOS/darwin-arm64 and pins platform-specific
-# native binaries, so reinstalling it on linux skips the ones we need
-# (npm/cli #4828). Letting npm resolve fresh on linux picks the right
-# native binary (e.g. @rollup/rollup-linux-arm64-gnu on node:20-slim).
-COPY package.json ./
+# Install from the lockfile with `npm ci`.
+#
+# This used to copy only package.json and run `npm install`, because an older
+# lockfile generated on macOS lacked the linux native binaries (npm/cli #4828).
+# The current lockfile records every platform's optional binaries —
+# @rolldown/binding-linux-*, @tailwindcss/oxide-linux-*, lightningcss-linux-*
+# — so npm ci picks the right one for this image. Skipping the lockfile meant
+# npm re-resolved the whole dependency tree against the registry on every
+# build (~4 minutes); npm ci only downloads the pinned tarballs.
+#
+# If a future lockfile is missing a linux binary, regenerate it with
+# `npm install` (not a partial update) rather than dropping the lockfile here.
+COPY package.json package-lock.json ./
 
-# --mount=type=cache persists npm's package tarball cache BETWEEN image
-# builds, so the second+ time this layer rebuilds it pulls from cache
-# instead of re-downloading every tarball.
-# --prefer-offline uses the cache when a package is available.
-# --no-audit / --no-fund skip the two slowest post-install chores.
+# The cache mount keeps npm's tarball cache between builds, so rebuilding
+# after a dependency change only downloads what changed. --prefer-offline
+# uses those cached tarballs without re-checking the registry.
 RUN --mount=type=cache,target=/root/.npm \
-    npm install \
-      --include=optional \
-      --legacy-peer-deps \
+    npm ci \
+      --prefer-offline \
       --no-audit \
       --no-fund
 

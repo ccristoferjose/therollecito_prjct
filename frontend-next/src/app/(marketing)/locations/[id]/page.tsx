@@ -63,7 +63,7 @@ export default async function LocationDetailPage({
       <JsonLd data={locationJsonLd(loc, env.siteUrl)} />
 
       <Link href="/locations" className="text-sm font-medium text-primary hover:underline">
-        ← All locations
+        <span aria-hidden="true">← </span>All locations
       </Link>
 
       <div className="mt-4 grid gap-8 lg:grid-cols-2">
@@ -90,7 +90,7 @@ export default async function LocationDetailPage({
 
           <Link
             href={`/order?location=${loc.id}`}
-            className="mt-8 inline-flex items-center gap-2 rounded-full bg-accent px-7 py-3.5 text-base font-bold text-text-inverse shadow-[var(--shadow-warm)] transition-colors hover:bg-accent-hover"
+            className="mt-8 inline-flex items-center gap-2 rounded-full bg-accent px-7 py-3.5 text-base font-bold text-primary-dark shadow-[var(--shadow-warm)] transition-colors hover:bg-accent-hover hover:text-text-inverse"
           >
             Order &amp; pick up here
             <ArrowRight size={18} />

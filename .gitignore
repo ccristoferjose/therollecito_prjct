@@ -15,6 +15,8 @@ firebase-service-account.json
 /frontend-next/.env
 /frontend-next/.env.*
 !/frontend-next/.env.example
+/frontend-next/test-results
+/frontend-next/playwright-report
 /.env
 /.env.local
 /.env.development

@@ -1,11 +1,14 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, CreditCard, Clock, User, CheckCircle, MapPin, ShieldCheck, AlertTriangle, Tag, X, CalendarClock } from 'lucide-react';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { useLang } from '@/providers/lang-provider';
+import { useAnnounce } from '@/providers/announcer-provider';
+import { showPrivacyLink } from '@/lib/config/legal';
 import { useClientAuth } from '@/providers/client-auth-provider';
 import { useCart } from '@/providers/cart-provider';
 import { useFetch } from '@/lib/hooks/use-fetch';
@@ -187,18 +190,18 @@ function StripePaymentForm({
     <form onSubmit={handlePay} className="space-y-4">
       <PaymentElement options={PAYMENT_ELEMENT_OPTIONS} />
       {payError && (
-        <div className="flex items-center gap-2 rounded-lg border border-error/20 bg-red-50 p-3 text-sm text-error">
-          <AlertTriangle size={14} /> {payError}
+        <div role="alert" className="flex items-center gap-2 rounded-lg border border-error/20 bg-red-50 p-3 text-sm text-error-text">
+          <AlertTriangle size={14} aria-hidden="true" /> {payError}
         </div>
       )}
       <Button type="submit" variant="accent" size="lg" className="w-full" disabled={processing || !stripe}>
         {processing ? (
           <>
-            <Spinner size="sm" /> Processing payment...
+            <Spinner size="sm" decorative /> Processing payment...
           </>
         ) : (
           <>
-            <CreditCard size={18} /> Pay now
+            <CreditCard size={18} aria-hidden="true" /> Pay now
           </>
         )}
       </Button>
@@ -216,6 +219,8 @@ export default function CheckoutPage() {
   const { data: locations } = useFetch<Location[]>('/locations');
   const currentLocation = (locations || []).find((l) => l.id === locationId);
   const router = useRouter();
+  const announce = useAnnounce();
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -278,6 +283,11 @@ export default function CheckoutPage() {
         discount_type: result.discount_type,
         discount_value: Number(result.discount_value) || 0,
       });
+      // The input is replaced by the "applied" chip, so focus would otherwise
+      // land on nothing; say the outcome and the new total.
+      announce(
+        `Promo code ${result.code} applied. ${formatCurrency(Number(result.discount_amount) || 0)} off.`,
+      );
     } catch (err) {
       setPromoError(err instanceof ApiError ? err.message : 'Invalid promo code.');
       setAppliedPromo(null);
@@ -290,6 +300,7 @@ export default function CheckoutPage() {
     setAppliedPromo(null);
     setPromoInput('');
     setPromoError(null);
+    announce('Promo code removed.');
   }
 
   // Re-preview the discount if the subtotal changes after applying a promo.
@@ -465,6 +476,15 @@ export default function CheckoutPage() {
     }
   }
 
+  const firstStepRender = useRef(true);
+  useEffect(() => {
+    if (firstStepRender.current) {
+      firstStepRender.current = false;
+      return;
+    }
+    headingRef.current?.focus();
+  }, [step]);
+
   // Redirect to cart if empty.
   useEffect(() => {
     if (items.length === 0 && !submitted && !loading && step === 'info') router.push('/cart');
@@ -476,20 +496,26 @@ export default function CheckoutPage() {
     <div className="mx-auto max-w-2xl px-4 py-10">
       <div className="mb-6 flex items-center gap-3">
         <button
+          type="button"
           onClick={() => (step === 'payment' ? setStep('info') : router.back())}
-          className="text-text-secondary hover:text-text"
+          className="-m-1 p-1 text-text-secondary hover:text-text"
           aria-label="Go back"
         >
-          <ArrowLeft size={20} />
+          <ArrowLeft size={20} aria-hidden="true" />
         </button>
-        <h1 className="text-2xl font-bold text-text">{step === 'payment' ? 'Payment' : t.checkout.title}</h1>
+        <h1 ref={headingRef} tabIndex={-1} className="text-2xl font-bold text-text focus:outline-none">
+          {step === 'payment' ? 'Payment' : t.checkout.title}
+        </h1>
       </div>
 
       {currentLocation && (
         <div className="mb-6 flex items-center gap-2 rounded-lg border border-primary/20 bg-primary-light/30 px-4 py-3">
-          <MapPin size={16} className="shrink-0 text-primary" />
+          <MapPin size={16} className="shrink-0 text-primary" aria-hidden="true" />
           <div>
-            <p className="text-sm font-medium text-primary-dark">{currentLocation.name}</p>
+            <p className="text-sm font-medium text-primary-dark">
+              <span className="sr-only">Pickup location: </span>
+              {currentLocation.name}
+            </p>
             <p className="text-xs text-text-secondary">
               {currentLocation.address}, {currentLocation.city}, {currentLocation.state} {currentLocation.zip_code}
             </p>
@@ -515,9 +541,9 @@ export default function CheckoutPage() {
 
           {!pickupTime && schedule.mode === 'closed' && (
             <div className="flex items-start gap-3 rounded-lg border border-error/30 bg-red-50 p-4">
-              <AlertTriangle size={18} className="mt-0.5 shrink-0 text-error" />
+              <AlertTriangle size={18} className="mt-0.5 shrink-0 text-error" aria-hidden="true" />
               <div>
-                <p className="text-sm font-semibold text-error">This location is closed</p>
+                <p className="text-sm font-semibold text-error-text">This location is closed</p>
                 <p className="mt-0.5 text-xs text-text-secondary">
                   Service hours: {schedule.openLabel} – {schedule.closeLabel}. Please come back tomorrow.
                 </p>
@@ -529,20 +555,21 @@ export default function CheckoutPage() {
             <Card>
               <div className="mb-2 flex items-center gap-2">
                 <CalendarClock size={18} className="text-primary" />
-                <h2 className="font-semibold text-text">Schedule your pickup</h2>
+                <h2 id="schedule-heading" className="font-semibold text-text">Schedule your pickup</h2>
               </div>
               <p className="mb-4 text-sm text-text-secondary">
                 We open at <span className="font-medium text-text">{schedule.openLabel}</span> today. Pick a time and
                 we&apos;ll have your order ready.
               </p>
               {schedule.slots.length === 0 ? (
-                <p className="text-sm text-error">No pickup slots remaining today.</p>
+                <p className="text-sm text-error-text">No pickup slots remaining today.</p>
               ) : (
-                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                <div role="group" aria-labelledby="schedule-heading" className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                   {schedule.slots.map((slot) => (
                     <button
                       key={slot.minutes}
                       type="button"
+                      aria-pressed={selectedSlot === slot.minutes}
                       onClick={() => setSelectedSlot(slot.minutes)}
                       className={`rounded-lg border px-2 py-2 text-sm transition-colors ${
                         selectedSlot === slot.minutes
@@ -562,14 +589,15 @@ export default function CheckoutPage() {
             <Card>
               <div className="mb-2 flex items-center gap-2">
                 <CalendarClock size={18} className="text-primary" />
-                <h2 className="font-semibold text-text">Pickup time</h2>
+                <h2 id="today-slots-heading" className="font-semibold text-text">Pickup time</h2>
               </div>
               <p className="mb-4 text-sm text-text-secondary">
                 Order now or schedule for later today (open until {schedule.closeLabel}).
               </p>
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+              <div role="group" aria-labelledby="today-slots-heading" className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                 <button
                   type="button"
+                  aria-pressed={selectedSlot === null}
                   onClick={() => setSelectedSlot(null)}
                   className={`rounded-lg border px-2 py-2 text-sm transition-colors ${
                     selectedSlot === null
@@ -583,6 +611,7 @@ export default function CheckoutPage() {
                   <button
                     key={slot.minutes}
                     type="button"
+                    aria-pressed={selectedSlot === slot.minutes}
                     onClick={() => setSelectedSlot(slot.minutes)}
                     className={`rounded-lg border px-2 py-2 text-sm transition-colors ${
                       selectedSlot === slot.minutes
@@ -616,22 +645,40 @@ export default function CheckoutPage() {
                   <p className="truncate text-sm font-medium text-text">{firebaseUser?.displayName}</p>
                   <p className="truncate text-xs text-text-secondary">{firebaseUser?.email}</p>
                 </div>
-                <CheckCircle size={18} className="shrink-0 text-success" />
+                <CheckCircle size={18} className="shrink-0 text-success" aria-hidden="true" />
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2">
-                <Input label={t.checkout.name} name="guest_name" placeholder={t.checkout.namePlaceholder} value={form.guest_name} onChange={handleChange} required />
-                <Input label={t.checkout.phone} name="guest_phone" type="tel" placeholder={t.checkout.phonePlaceholder} value={form.guest_phone} onChange={handleChange} />
+                {/* autoComplete: WCAG 1.3.5 (and fewer keystrokes for everyone).
+                    Phone is marked optional in its label rather than relying
+                    on the name field's `required` alone. */}
+                <Input label={t.checkout.name} name="guest_name" autoComplete="name" placeholder={t.checkout.namePlaceholder} value={form.guest_name} onChange={handleChange} required />
+                <Input label={`${t.checkout.phone} ${t.checkout.optional}`} name="guest_phone" type="tel" autoComplete="tel" placeholder={t.checkout.phonePlaceholder} value={form.guest_phone} onChange={handleChange} />
               </div>
+            )}
+            {showPrivacyLink && (
+              <p className="mt-3 text-xs text-text-secondary">
+                How we use these details:{' '}
+                <Link href="/privacy" className="underline hover:text-text">
+                  Privacy Policy
+                </Link>
+              </p>
             )}
           </Card>
 
           <Card>
             <div className="mb-4 flex items-center gap-2">
-              <Clock size={18} className="text-primary" />
+              <Clock size={18} className="text-primary" aria-hidden="true" />
               <h2 className="font-semibold text-text">{t.checkout.orderDetails}</h2>
             </div>
+            {/* The placeholder disappears on typing and was the only label.
+                A visually hidden label keeps the approved layout; a visible
+                one is recommended in the audit report. */}
+            <label htmlFor="checkout-notes" className="sr-only">
+              {t.checkout.specialInstructions} {t.checkout.optional}
+            </label>
             <textarea
+              id="checkout-notes"
               name="notes"
               rows={3}
               placeholder={t.checkout.specialPlaceholder}
@@ -666,7 +713,7 @@ export default function CheckoutPage() {
               {appliedPromo ? (
                 <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-3 py-2">
                   <div className="flex items-center gap-2">
-                    <Tag size={14} className="text-green-700" />
+                    <Tag size={14} className="text-green-700" aria-hidden="true" />
                     <div>
                       <p className="text-sm font-semibold text-green-800">{appliedPromo.code}</p>
                       <p className="text-[11px] text-green-700">
@@ -676,19 +723,24 @@ export default function CheckoutPage() {
                       </p>
                     </div>
                   </div>
-                  <button type="button" onClick={removePromo} className="rounded p-1 text-green-700 hover:bg-green-100" aria-label="Remove promo code">
-                    <X size={14} />
+                  {/* p-1.5: the old p-1 made a 22px target, under WCAG 2.5.8's 24px. */}
+                  <button type="button" onClick={removePromo} className="rounded p-1.5 text-green-700 hover:bg-green-100" aria-label={`Remove promo code ${appliedPromo.code}`}>
+                    <X size={14} aria-hidden="true" />
                   </button>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <label className="flex items-center gap-1.5 text-sm font-medium text-text">
-                    <Tag size={14} className="text-primary" />
+                  <label htmlFor="promo-code" className="flex items-center gap-1.5 text-sm font-medium text-text">
+                    <Tag size={14} className="text-primary" aria-hidden="true" />
                     Promo code
                   </label>
                   <div className="flex gap-2">
                     <input
+                      id="promo-code"
                       type="text"
+                      autoComplete="off"
+                      aria-invalid={promoError ? true : undefined}
+                      aria-describedby={promoError ? 'promo-code-error' : undefined}
                       value={promoInput}
                       onChange={(e) => {
                         setPromoInput(e.target.value.toUpperCase());
@@ -701,14 +753,18 @@ export default function CheckoutPage() {
                         }
                       }}
                       placeholder="Enter code"
-                      className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-primary/30"
+                      className="flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm uppercase focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
                       disabled={promoApplying}
                     />
                     <Button type="button" variant="outline" size="sm" onClick={handleApplyPromo} disabled={promoApplying || !promoInput.trim()}>
                       {promoApplying ? 'Checking...' : 'Apply'}
                     </Button>
                   </div>
-                  {promoError && <p className="text-xs text-error">{promoError}</p>}
+                  {promoError && (
+                    <p id="promo-code-error" role="alert" className="text-xs text-error-text">
+                      {promoError}
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -742,9 +798,9 @@ export default function CheckoutPage() {
           {/* Keys present but unusable — surfaced up front, not on click, and
               never simulated. */}
           {stripeConfigError && (
-            <div className="flex items-start gap-2 rounded-lg border border-error bg-red-50 px-4 py-3">
-              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-error" />
-              <div className="text-sm text-error">
+            <div role="alert" className="flex items-start gap-2 rounded-lg border border-error bg-red-50 px-4 py-3">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-error" aria-hidden="true" />
+              <div className="text-sm text-error-text">
                 <p className="font-semibold">Stripe is misconfigured — payment cannot be taken.</p>
                 <p className="mt-0.5">{stripeConfigError}</p>
               </div>
@@ -759,7 +815,11 @@ export default function CheckoutPage() {
             </div>
           )}
 
-          {error && <div className="rounded-lg border border-error/20 bg-red-50 p-3 text-sm text-error">{error}</div>}
+          {error && (
+            <div role="alert" className="rounded-lg border border-error/20 bg-red-50 p-3 text-sm text-error-text">
+              {error}
+            </div>
+          )}
 
           {selectedSlot != null && schedule.mode !== 'closed' && (
             <p className="flex items-center justify-center gap-1.5 text-sm text-text-secondary">
@@ -771,11 +831,11 @@ export default function CheckoutPage() {
           <Button type="submit" variant="accent" size="lg" className="w-full" disabled={loading || schedule.mode === 'closed'}>
             {loading ? (
               <>
-                <Spinner size="sm" /> {t.checkout.processing}
+                <Spinner size="sm" decorative /> {t.checkout.processing}
               </>
             ) : (
               <>
-                <CreditCard size={18} /> {stripeConfigured ? 'Continue to Payment' : t.checkout.placeOrder} &middot;{' '}
+                <CreditCard size={18} aria-hidden="true" /> {stripeConfigured ? 'Continue to Payment' : t.checkout.placeOrder} &middot;{' '}
                 {formatCurrency(finalTotal)}
               </>
             )}
@@ -811,7 +871,7 @@ export default function CheckoutPage() {
               <h2 className="font-semibold text-text">Payment</h2>
             </div>
             <div className="mb-4 flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2">
-              <ShieldCheck size={14} className="shrink-0 text-green-600" />
+              <ShieldCheck size={14} className="shrink-0 text-green-600" aria-hidden="true" />
               <p className="text-xs text-green-700">Secured by Stripe. Your payment details never touch our servers.</p>
             </div>
             <Elements stripe={stripePromise} options={elementsOptions}>
@@ -824,14 +884,14 @@ export default function CheckoutPage() {
             </Elements>
           </Card>
 
-          {error && <div className="rounded-lg border border-error/20 bg-red-50 p-3 text-sm text-error">{error}</div>}
+          {error && <div className="rounded-lg border border-error/20 bg-red-50 p-3 text-sm text-error-text">{error}</div>}
         </div>
       )}
 
       {/* Processing */}
       {step === 'processing' && (
-        <div className="flex flex-col items-center justify-center gap-4 py-16">
-          <Spinner size="lg" />
+        <div role="status" className="flex flex-col items-center justify-center gap-4 py-16">
+          <Spinner size="lg" decorative />
           <p className="text-text-secondary">Processing your order...</p>
         </div>
       )}

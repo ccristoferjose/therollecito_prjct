@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { LangProvider } from '@/providers/lang-provider';
 import SiteFooter from '@/components/layout/site-footer';
+import SkipLink from '@/components/layout/skip-link';
 
 /**
  * PUBLIC marketing layout — Server Component. SEO-focused chrome (header/footer)
@@ -16,8 +17,9 @@ import SiteFooter from '@/components/layout/site-footer';
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col">
+      <SkipLink />
       <header className="sticky top-0 z-40 border-b border-border bg-surface/90 backdrop-blur">
-        <nav className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+        <nav aria-label="Main" className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
           <Link href="/" className="text-lg font-extrabold text-primary">
             The Rollecito
           </Link>
@@ -25,7 +27,7 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
             <Link href="/locations" className="hover:text-primary">Locations</Link>
             <Link
               href="/order"
-              className="rounded-full bg-accent px-4 py-2 font-semibold text-text-inverse shadow-warm transition-colors hover:bg-accent-hover"
+              className="rounded-full bg-accent px-4 py-2 font-semibold text-primary-dark shadow-warm transition-colors hover:bg-accent-hover hover:text-text-inverse"
             >
               Order online
             </Link>
@@ -33,9 +35,11 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
         </nav>
       </header>
 
-      <main className="flex-1">{children}</main>
+      <main id="main-content" tabIndex={-1} className="flex-1">{children}</main>
 
-      <LangProvider>
+      {/* syncDocumentLang off: only the footer is translated on these pages,
+          so a saved Spanish preference must not relabel the English page. */}
+      <LangProvider syncDocumentLang={false}>
         <SiteFooter />
       </LangProvider>
     </div>

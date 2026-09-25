@@ -4,6 +4,28 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { Mail, Phone, MapPin, Clock } from 'lucide-react';
 import { useLang } from '@/providers/lang-provider';
+import { legal, showPrivacyLink } from '@/lib/config/legal';
+
+// Developer credit. A small line in the footer's bottom row instead of the
+// landing-page pitch section, so the site itself stays about The Rollecito.
+const DEVELOPER_NAME = 'Christtopher Chitay';
+const DEVELOPER_MAILTO = `mailto:chris.chitay@gmail.com?subject=${encodeURIComponent(
+  'Ordering platform inquiry (via The Rollecito)',
+)}&body=${encodeURIComponent(
+  [
+    'Hi Christtopher,',
+    '',
+    'I saw the online ordering platform you built for The Rollecito and would like to learn more about a similar platform for my business.',
+    '',
+    'Business name:',
+    'Type of business:',
+    'Number of locations:',
+    'What I need (online ordering, scheduled pickup, payments, kitchen workflow, admin dashboard, other):',
+    'Best way and time to reach me:',
+    '',
+    'Thanks!',
+  ].join('\n'),
+)}`;
 
 /**
  * The public site footer, shared by BOTH the (client) and (marketing) layouts.
@@ -32,7 +54,6 @@ function BrandMark() {
       <Image
         src="/icon_main.png"
         alt=""
-        aria-hidden
         width={44}
         height={44}
         className="h-11 w-11 rounded-xl object-cover shadow-sm"
@@ -43,10 +64,12 @@ function BrandMark() {
 }
 
 export default function SiteFooter() {
-  const { t } = useLang();
+  const { t, lang } = useLang();
 
+  // `lang` on the footer itself: on the marketing pages only the footer is
+  // translated, so the document stays lang="en" while this block may be Spanish.
   return (
-    <footer className="bg-primary-dark text-[#FFF1DC]">
+    <footer lang={lang} className="bg-primary-dark text-[#FFF1DC]">
       <div className="mx-auto max-w-6xl px-4 py-14">
         <div className="grid gap-10 md:grid-cols-4">
           <div className="md:col-span-2">
@@ -57,7 +80,7 @@ export default function SiteFooter() {
                 href="https://www.instagram.com/therollecito?igsh=NTc4MTIwNjQ2YQ=="
                 target="_blank"
                 rel="noreferrer"
-                aria-label="Instagram"
+                aria-label={`Instagram ${t.a11y.opensInNewTab}`}
                 className="flex h-9 w-9 items-center justify-center rounded-full bg-[#FFF1DC]/10 transition-colors hover:bg-accent-hover"
               >
                 <InstagramGlyph width="16" height="16" />
@@ -65,33 +88,33 @@ export default function SiteFooter() {
             </div>
           </div>
 
-          <div>
-            <h4 className="mb-4 font-bold text-[#FFF1DC]">{t.footer.quickLinks}</h4>
+          <nav aria-labelledby="footer-quick-links">
+            <h2 id="footer-quick-links" className="mb-4 font-bold text-[#FFF1DC]">{t.footer.quickLinks}</h2>
             <ul className="space-y-2 text-sm text-[#FFF1DC]/80">
               <li><Link href="/" className="transition-colors hover:text-accent">{t.nav.home}</Link></li>
               <li><Link href="/order" className="transition-colors hover:text-accent">{t.nav.menu}</Link></li>
               <li><Link href="/locations" className="transition-colors hover:text-accent">{t.nav.locations}</Link></li>
               <li><Link href="/track" className="transition-colors hover:text-accent">{t.tracking.trackOrder}</Link></li>
             </ul>
-          </div>
+          </nav>
 
           <div>
-            <h4 className="mb-4 font-bold text-[#FFF1DC]">{t.footer.contact}</h4>
+            <h2 className="mb-4 font-bold text-[#FFF1DC]">{t.footer.contact}</h2>
             <ul className="space-y-2.5 text-sm text-[#FFF1DC]/80">
               <li className="flex items-center gap-2">
-                <Mail size={14} className="text-accent" />
-                <a href="mailto:hello@therollecito.com" className="transition-colors hover:text-accent">
-                  hello@therollecito.com
+                <Mail size={14} className="text-accent" aria-hidden="true" />
+                <a href={`mailto:${legal.contactEmail}`} className="transition-colors hover:text-accent">
+                  {legal.contactEmail}
                 </a>
               </li>
               <li className="flex items-center gap-2">
-                <Phone size={14} className="text-accent" />
-                <a href="tel:+13236129202" className="transition-colors hover:text-accent">
-                  (323) 612-9202
+                <Phone size={14} className="text-accent" aria-hidden="true" />
+                <a href={legal.contactPhoneHref} className="transition-colors hover:text-accent">
+                  {legal.contactPhoneDisplay}
                 </a>
               </li>
               <li className="flex items-start gap-2">
-                <MapPin size={14} className="mt-0.5 shrink-0 text-accent" />
+                <MapPin size={14} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
                 <a
                   href="https://maps.google.com/?q=620+El+Segundo+Blvd,+Los+Angeles,+CA+90059"
                   target="_blank"
@@ -99,10 +122,11 @@ export default function SiteFooter() {
                   className="transition-colors hover:text-accent"
                 >
                   620 El Segundo Blvd, Los Angeles, CA 90059
+                  <span className="sr-only"> {t.a11y.opensInNewTab}</span>
                 </a>
               </li>
               <li className="flex items-start gap-2">
-                <Clock size={14} className="mt-0.5 shrink-0 text-accent" />
+                <Clock size={14} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
                 <span className="whitespace-pre-line">{t.footer.hoursValue}</span>
               </li>
             </ul>
@@ -113,7 +137,36 @@ export default function SiteFooter() {
           {/* Year is rendered client-side; this component is already a Client
               Component, so there is no SSR/CSR mismatch to guard against. */}
           <p>&copy; {new Date().getFullYear()} The Rollecito. {t.footer.rights}</p>
+          {/* Legal links. Terms of Service is not linked yet: no terms page
+              exists, and a link to a 404 is worse than no link. */}
+          <nav aria-label={t.footer.legal}>
+            <ul className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1">
+              {showPrivacyLink && (
+                <li>
+                  <Link href="/privacy" className="transition-colors hover:text-accent">
+                    {t.footer.privacy}
+                  </Link>
+                </li>
+              )}
+              <li>
+                <Link href="/accessibility" className="transition-colors hover:text-accent">
+                  {t.footer.accessibility}
+                </Link>
+              </li>
+            </ul>
+          </nav>
           <p>Baked with love in Los Angeles.</p>
+          <p className="text-xs">
+            Powered by {DEVELOPER_NAME}
+            <span aria-hidden="true"> · </span>
+            <a
+              href={DEVELOPER_MAILTO}
+              aria-label={`Contact ${DEVELOPER_NAME} by email`}
+              className="underline underline-offset-2 transition-colors hover:text-accent"
+            >
+              Contact
+            </a>
+          </p>
         </div>
       </div>
     </footer>

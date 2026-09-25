@@ -40,7 +40,7 @@ Production:
 
 Local development only:
 
-- `docker-compose.yml` — MySQL, MinIO, backend, Vite frontend.
+- `docker-compose.yml` — MySQL, local S3 (RustFS, MinIO-compatible), backend, Next.js frontend (`frontend-next/`, http://localhost:3000).
 - `backend/.env`, `frontend/.env`.
 
 Deprecated stubs that exit non-zero — do not use, safe to delete:

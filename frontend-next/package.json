@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "eslint .",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test:a11y": "playwright test"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.1.0",
@@ -24,13 +25,16 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@eslint/eslintrc": "^3.2.0",
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.2.2",
     "@types/node": "^22.10.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.4",
     "eslint-config-next": "16.3.5",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
     "tailwindcss": "^4.2.2",
     "typescript": "^5.7.0"
   }

@@ -1,13 +1,27 @@
-import type { InputHTMLAttributes } from 'react';
+import { useId, type InputHTMLAttributes } from 'react';
 import { cn } from '@/lib/utils/cn';
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   error?: string;
+  /** Visible helper text, linked to the input with aria-describedby. */
+  hint?: string;
 }
 
-export default function Input({ label, error, className, id, ...props }: InputProps) {
-  const inputId = id || label?.toLowerCase().replace(/\s+/g, '-');
+/**
+ * Labelled text input. The <label> is programmatically tied to the input, and
+ * `error` / `hint` are exposed through aria-describedby, with aria-invalid set
+ * while an error is shown (WCAG 1.3.1, 3.3.1, 4.1.2).
+ */
+export default function Input({ label, error, hint, className, id, ...props }: InputProps) {
+  // useId, not a slug of the label: two inputs with the same label (or a label
+  // that changes with the language) must never share or lose their id.
+  const generatedId = useId();
+  const inputId = id || generatedId;
+  const hintId = hint ? `${inputId}-hint` : undefined;
+  const errorId = error ? `${inputId}-error` : undefined;
+  const describedBy =
+    [props['aria-describedby'], hintId, errorId].filter(Boolean).join(' ') || undefined;
 
   return (
     <div className="space-y-1">
@@ -26,8 +40,19 @@ export default function Input({ label, error, className, id, ...props }: InputPr
           className,
         )}
         {...props}
+        aria-invalid={error ? true : props['aria-invalid']}
+        aria-describedby={describedBy}
       />
-      {error && <p className="text-xs text-error">{error}</p>}
+      {hint && (
+        <p id={hintId} className="text-xs text-text-secondary">
+          {hint}
+        </p>
+      )}
+      {error && (
+        <p id={errorId} className="text-xs text-error-text">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

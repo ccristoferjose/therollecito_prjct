@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -8,6 +8,7 @@ import {
   MapPin, ArrowRight, Search, ShoppingBag, Navigation,
 } from 'lucide-react';
 import { useLang } from '@/providers/lang-provider';
+import { useAnnounce } from '@/providers/announcer-provider';
 import { useClientAuth } from '@/providers/client-auth-provider';
 import { useSocket } from '@/lib/hooks/use-socket';
 import { useFetch } from '@/lib/hooks/use-fetch';
@@ -15,7 +16,7 @@ import { api, ApiError } from '@/lib/api/client';
 import { formatCurrency, formatTime, formatDate, formatOrderNumber } from '@/lib/utils/format';
 import { getGuestOrders, removeGuestOrder } from '@/lib/utils/guest-orders';
 import Card from '@/components/ui/card';
-import Button from '@/components/ui/button';
+import Button, { buttonVariants } from '@/components/ui/button';
 import Input from '@/components/ui/input';
 import Badge from '@/components/ui/badge';
 import Spinner from '@/components/ui/spinner';
@@ -75,12 +76,13 @@ function DirectionsModal({
             onClick={() => openIn(urls[opt.key])}
             className="flex w-full items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:border-primary/50 hover:bg-primary-light/20"
           >
-            <span className="text-2xl">{opt.emoji}</span>
-            <div className="flex-1">
-              <p className="font-medium text-text">{opt.label}</p>
-              <p className="text-xs text-text-secondary">{opt.sub}</p>
-            </div>
-            <ArrowRight size={16} className="text-text-secondary" />
+            <span className="text-2xl" aria-hidden="true">{opt.emoji}</span>
+            <span className="flex-1">
+              <span className="block font-medium text-text">{opt.label}</span>
+              <span className="block text-xs text-text-secondary">{opt.sub}</span>
+              <span className="sr-only"> (opens in a new tab)</span>
+            </span>
+            <ArrowRight size={16} className="text-text-secondary" aria-hidden="true" />
           </button>
         ))}
       </div>
@@ -98,15 +100,20 @@ const STEPS = [
 function StatusTimeline({ currentStatus }: { currentStatus: string }) {
   const currentIdx = STEPS.findIndex((s) => s.key === currentStatus);
   return (
-    <div className="flex w-full items-center justify-between">
+    <ol aria-label="Order progress" className="flex w-full items-center justify-between">
       {STEPS.map((step, idx) => {
         const done = idx <= currentIdx;
         const active = idx === currentIdx;
         const Icon = step.icon;
+        const state = active ? 'current step' : done ? 'completed' : 'not started';
         return (
-          <div key={step.key} className="relative flex flex-1 flex-col items-center">
+          <li
+            key={step.key}
+            aria-current={active ? 'step' : undefined}
+            className="relative flex flex-1 flex-col items-center"
+          >
             {idx > 0 && (
-              <div className={`absolute top-5 right-1/2 -z-10 h-0.5 w-full ${idx <= currentIdx ? 'bg-primary' : 'bg-border'}`} />
+              <div aria-hidden="true" className={`absolute top-5 right-1/2 -z-10 h-0.5 w-full ${idx <= currentIdx ? 'bg-primary' : 'bg-border'}`} />
             )}
             <div
               className={`flex h-10 w-10 items-center justify-center rounded-full border-2 transition-all ${
@@ -117,15 +124,16 @@ function StatusTimeline({ currentStatus }: { currentStatus: string }) {
                     : 'border-border bg-surface text-text-secondary'
               }`}
             >
-              <Icon size={18} />
+              <Icon size={18} aria-hidden="true" />
             </div>
             <span className={`mt-1.5 text-xs font-medium ${active ? 'text-primary-dark' : done ? 'text-primary' : 'text-text-secondary'}`}>
               {step.label}
+              <span className="sr-only">, {state}</span>
             </span>
-          </div>
+          </li>
         );
       })}
-    </div>
+    </ol>
   );
 }
 
@@ -136,6 +144,8 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showDirections, setShowDirections] = useState(false);
+  const announce = useAnnounce();
+  const lastStatus = useRef<string | null>(null);
 
   const { data: locations } = useFetch<Location[]>('/locations');
   const orderLocation = (locations || []).find((l) => l.id === order?.location_id);
@@ -189,10 +199,30 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
       : undefined,
   );
 
+  const statusHeading = !order
+    ? null
+    : order.status_name === 'COMPLETED'
+      ? t.tracking.completed
+      : order.status_name === 'READY'
+        ? t.tracking.ready
+        : order.status_name === 'PREPARING'
+          ? t.tracking.preparing
+          : t.tracking.received;
+
+  // Announce live status changes (socket or poll), not the initial load: a
+  // customer waiting with a screen reader otherwise never hears "Ready".
+  useEffect(() => {
+    if (!order) return;
+    if (lastStatus.current && lastStatus.current !== order.status_name && statusHeading) {
+      announce(`Order status updated: ${statusHeading}`);
+    }
+    lastStatus.current = order.status_name;
+  }, [order, statusHeading, announce]);
+
   if (loading) {
     return (
       <div className="flex justify-center py-20">
-        <Spinner size="lg" />
+        <Spinner size="lg" label="Loading order…" />
       </div>
     );
   }
@@ -200,11 +230,11 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
   if (error || !order) {
     return (
       <div className="mx-auto max-w-lg px-4 py-16 text-center">
-        <Package size={48} className="mx-auto mb-4 text-border" strokeWidth={1.5} />
-        <h2 className="text-lg font-semibold text-text">{t.tracking.notFound}</h2>
+        <Package size={48} className="mx-auto mb-4 text-border" strokeWidth={1.5} aria-hidden="true" />
+        <h1 className="text-lg font-semibold text-text">{t.tracking.notFound}</h1>
         <p className="mt-1 text-sm text-text-secondary">{t.tracking.notFoundDesc}</p>
-        <Link href="/track" className="mt-4 inline-block">
-          <Button variant="outline">{t.tracking.tryAgain}</Button>
+        <Link href="/track" className={buttonVariants({ variant: 'outline', className: 'mt-4' })}>
+          {t.tracking.tryAgain}
         </Link>
       </div>
     );
@@ -219,25 +249,17 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
         <p className="mb-1 text-sm text-text-secondary">
           {t.tracking.order} {formatOrderNumber(order)}
         </p>
-        <h2 className="mb-6 text-2xl font-bold text-text">
-          {order.status_name === 'COMPLETED'
-            ? t.tracking.completed
-            : order.status_name === 'READY'
-              ? t.tracking.ready
-              : order.status_name === 'PREPARING'
-                ? t.tracking.preparing
-                : t.tracking.received}
-        </h2>
+        <h1 className="mb-6 text-2xl font-bold text-text">{statusHeading}</h1>
         <StatusTimeline currentStatus={order.status_name} />
       </Card>
 
       <Card>
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-light">
-            <MapPin size={20} className="text-primary" />
+            <MapPin size={20} className="text-primary" aria-hidden="true" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-text">{t.tracking.pickupAt}</p>
+            <h2 className="text-sm font-medium text-text">{t.tracking.pickupAt}</h2>
             <p className="text-sm font-semibold text-primary-dark">{order.location_name}</p>
             {orderLocation && (
               <p className="mt-0.5 text-xs text-text-secondary">
@@ -247,8 +269,8 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
           </div>
         </div>
         {orderLocation && (
-          <Button type="button" variant="outline" size="sm" className="mt-3 w-full" onClick={() => setShowDirections(true)}>
-            <Navigation size={14} /> Get directions
+          <Button type="button" variant="outline" size="sm" className="mt-3 w-full" aria-haspopup="dialog" onClick={() => setShowDirections(true)}>
+            <Navigation size={14} aria-hidden="true" /> Get directions
           </Button>
         )}
       </Card>
@@ -256,17 +278,18 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
       <DirectionsModal open={showDirections} onClose={() => setShowDirections(false)} location={orderLocation} />
 
       <Card>
-        <h3 className="mb-3 flex items-center gap-2 font-semibold text-text">
-          <ShoppingBag size={16} className="text-primary" />
+        <h2 className="mb-3 flex items-center gap-2 font-semibold text-text">
+          <ShoppingBag size={16} className="text-primary" aria-hidden="true" />
           {t.tracking.items}
-        </h3>
-        <div className="space-y-3">
+        </h2>
+        <ul className="space-y-3">
           {orderItems.map((item) => {
             const opts = orderOptions.filter((o) => o.order_item_id === item.id);
             return (
-              <div key={item.id} className="flex items-start gap-3">
+              <li key={item.id} className="flex items-start gap-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-primary-light text-xs font-bold text-primary">
                   {item.quantity}
+                  <span className="sr-only"> ×</span>
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-text">{item.item_name}</p>
@@ -279,15 +302,16 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
                       ))}
                     </div>
                   )}
-                  {item.notes && <p className="mt-0.5 text-xs text-accent">{item.notes}</p>}
+                  {/* Was text-accent on white: 2.06:1. */}
+                  {item.notes && <p className="mt-0.5 text-xs text-warning-text">{item.notes}</p>}
                 </div>
                 <span className="shrink-0 text-sm font-medium text-text">
                   {formatCurrency(item.unit_price * item.quantity)}
                 </span>
-              </div>
+              </li>
             );
           })}
-        </div>
+        </ul>
         <div className="mt-4 flex justify-between border-t border-border pt-3">
           <span className="font-semibold text-text">{t.tracking.total}</span>
           <span className="font-bold text-primary-dark">{formatCurrency(order.total_amount)}</span>
@@ -310,10 +334,8 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
       </Card>
 
       <div className="flex gap-3">
-        <Link href="/order" className="flex-1">
-          <Button variant="outline" className="w-full">
-            {t.tracking.orderMore} <ArrowRight size={16} />
-          </Button>
+        <Link href="/order" className={buttonVariants({ variant: 'outline', className: 'w-full flex-1' })}>
+          {t.tracking.orderMore} <ArrowRight size={16} aria-hidden="true" />
         </Link>
       </div>
     </div>
@@ -342,7 +364,7 @@ function GuestOrderCard({ trackingCode }: { trackingCode: string }) {
         }`}
       >
         <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${isActive ? 'bg-primary-light' : 'bg-gray-100'}`}>
-          <ShoppingBag size={18} className={isActive ? 'text-primary' : 'text-text-secondary'} />
+          <ShoppingBag size={18} className={isActive ? 'text-primary' : 'text-text-secondary'} aria-hidden="true" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -351,13 +373,13 @@ function GuestOrderCard({ trackingCode }: { trackingCode: string }) {
           </div>
           <div className="mt-0.5 flex items-center gap-3 text-xs text-text-secondary">
             <span className="flex items-center gap-1">
-              <MapPin size={10} />
+              <MapPin size={10} aria-hidden="true" />
               {order.location_name}
             </span>
             <span>{formatCurrency(order.total_amount)}</span>
           </div>
         </div>
-        {isActive && <span className="shrink-0 text-xs font-medium text-primary">Track &rarr;</span>}
+        {isActive && <span aria-hidden="true" className="shrink-0 text-xs font-medium text-primary">Track &rarr;</span>}
       </Card>
     </Link>
   );
@@ -384,7 +406,7 @@ export default function TrackPage() {
     <div className="mx-auto max-w-md px-4 py-10">
       <div className="mb-8 text-center">
         <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-primary-light">
-          <Search size={28} className="text-primary" />
+          <Search size={28} className="text-primary" aria-hidden="true" />
         </div>
         <h1 className="text-2xl font-bold text-text">{t.tracking.title}</h1>
         <p className="mt-1 text-text-secondary">{t.tracking.subtitle}</p>
@@ -413,12 +435,14 @@ export default function TrackPage() {
           <Input
             label={t.tracking.orderNumber}
             placeholder="e.g. a8f2e9b1-4c3d-..."
+            autoComplete="off"
+            spellCheck={false}
             value={lookupId}
             onChange={(e) => setLookupId(e.target.value)}
             required
           />
           <Button type="submit" variant="primary" className="w-full" size="md">
-            <Search size={16} /> {t.tracking.trackButton}
+            <Search size={16} aria-hidden="true" /> {t.tracking.trackButton}
           </Button>
         </form>
       </Card>

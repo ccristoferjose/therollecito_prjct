@@ -6,6 +6,7 @@ import Modal from '@/components/ui/modal';
 import Button from '@/components/ui/button';
 import Spinner from '@/components/ui/spinner';
 import { usePickup } from '@/providers/pickup-provider';
+import { useAnnounce } from '@/providers/announcer-provider';
 import {
   fromLocalDateTime,
   listBookablePeriods,
@@ -82,6 +83,7 @@ export default function PickupPicker({
   const [periods, setPeriods] = useState<BookablePeriod[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [warning, setWarning] = useState<string[] | null>(null);
+  const announce = useAnnounce();
 
   const days = Array.from({ length: DAYS_AHEAD }, (_, i) => {
     const d = new Date(today);
@@ -110,6 +112,13 @@ export default function PickupPicker({
   async function choose(slot: string) {
     const unavailable = await setPickupTime(slot);
     setOpen(false);
+    // Confirm the choice: the dialog closes and the summary line updates away
+    // from focus. An unavailable-items warning (role="alert") speaks for itself.
+    if (!unavailable.length) {
+      announce(
+        `Pickup time set to ${formatDayLabel(fromLocalDateTime(slot), today)} at ${formatSlotLabel(slot)}.`,
+      );
+    }
     // Items are flagged, never dropped — the customer decides what to do.
     setWarning(unavailable.length ? unavailable.map((u) => u.item_name) : null);
   }
@@ -136,7 +145,15 @@ export default function PickupPicker({
             </span>
           )}
         </div>
-        <Button size="sm" variant="outline" onClick={() => setOpen(true)} disabled={validating}>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => setOpen(true)}
+          disabled={validating}
+          aria-haspopup="dialog"
+          aria-label={pickupTime ? 'Change pickup time' : 'Choose a time for pickup'}
+        >
           {pickupTime ? 'Change' : 'Choose a time'}
         </Button>
       </div>
@@ -162,11 +179,11 @@ export default function PickupPicker({
       <Modal open={open} onClose={() => setOpen(false)} title="When would you like to pick up?">
         <div className="space-y-4">
           <div>
-            <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+            <h3 id="pickup-day-label" className="mb-2 flex items-center gap-2 text-sm font-medium">
               <CalendarDays className="h-4 w-4" aria-hidden="true" />
               Day
-            </div>
-            <div className="flex flex-wrap gap-2">
+            </h3>
+            <div role="group" aria-labelledby="pickup-day-label" className="flex flex-wrap gap-2">
               {days.map((d) => {
                 const value = toLocalDate(d);
                 const active = value === selectedDate;
@@ -189,7 +206,7 @@ export default function PickupPicker({
 
           {loading ? (
             <div className="flex justify-center py-8">
-              <Spinner />
+              <Spinner label="Loading pickup times…" />
             </div>
           ) : !periods?.length ? (
             <p className="py-6 text-center text-sm text-text-secondary">
@@ -200,15 +217,16 @@ export default function PickupPicker({
               const slots = buildSlots(period);
               return (
                 <div key={period.id}>
-                  <div className="mb-2 text-sm font-semibold">{period.name}</div>
+                  <h3 id={`pickup-period-${period.id}`} className="mb-2 text-sm font-semibold">{period.name}</h3>
                   {slots.length === 0 ? (
                     <p className="text-sm text-text-secondary">No times left in this period.</p>
                   ) : (
-                    <div className="flex flex-wrap gap-2">
+                    <div role="group" aria-labelledby={`pickup-period-${period.id}`} className="flex flex-wrap gap-2">
                       {slots.map((slot) => (
                         <button
                           key={slot}
                           type="button"
+                          aria-pressed={slot === pickupTime}
                           onClick={() => void choose(slot)}
                           className={`rounded-md border px-3 py-1.5 text-sm ${
                             slot === pickupTime
