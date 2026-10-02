@@ -81,13 +81,13 @@ export default async function LandingPage() {
                 </span>
               </h1>
               <p className="mt-5 max-w-xl text-lg leading-relaxed text-primary-dark/80">{t.hero.subtitle}</p>
-              {/* Primary CTA — clear "order online → pick up at a location". */}
+              {/* Primary CTA. Fulfillment (pickup or delivery) is chosen at checkout. */}
               <div className="mt-8 flex flex-wrap gap-3">
                 <Link
                   href="/order"
                   className="inline-flex items-center gap-2 rounded-full bg-primary px-7 py-3.5 text-base font-semibold text-text-inverse shadow-[var(--shadow-warm)] transition-colors hover:bg-accent-hover"
                 >
-                  {t.hero.orderNow} &amp; pick up
+                  {t.hero.orderNow}
                   <ArrowRight size={18} />
                 </Link>
                 <Link

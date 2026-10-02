@@ -8,10 +8,13 @@ import { env } from '@/lib/config/env';
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /** Optional machine-readable code from the backend (e.g. DELIVERY_QUOTE_EXPIRED). */
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -51,8 +54,8 @@ export async function apiRequest<T>(endpoint: string, options: RequestOptions = 
   });
 
   if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new ApiError(data.error || `Request failed (${res.status})`, res.status);
+    const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+    throw new ApiError(data.error || `Request failed (${res.status})`, res.status, data.code);
   }
   if (res.status === 204) return null as T;
   return res.json() as Promise<T>;

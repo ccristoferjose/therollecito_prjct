@@ -15,6 +15,19 @@ router.post(
     body('location_id').isInt({ gt: 0 }).withMessage('Valid location_id required.'),
     body('pickup_time').optional({ nullable: true, checkFalsy: true }).isISO8601()
       .withMessage('pickup_time must be an ISO 8601 datetime.'),
+    // Delivery (optional — omitted means PICKUP, exactly as before).
+    body('fulfillment_type').optional().isIn(['PICKUP', 'DELIVERY'])
+      .withMessage('fulfillment_type must be PICKUP or DELIVERY.'),
+    body('delivery_quote_id')
+      .if(body('fulfillment_type').equals('DELIVERY'))
+      .isString().trim().notEmpty().isLength({ max: 100 })
+      .withMessage('An accepted delivery quote is required.'),
+    body('delivery_phone')
+      .if(body('fulfillment_type').equals('DELIVERY'))
+      .isString().trim().matches(/^\+?[\d\s().-]{10,20}$/)
+      .withMessage('A valid phone number is required for delivery.'),
+    body('delivery_notes').optional({ nullable: true, checkFalsy: true }).isString()
+      .isLength({ max: 280 }).withMessage('Delivery instructions must be 280 characters or fewer.'),
     validateRequest,
   ],
   orderController.create

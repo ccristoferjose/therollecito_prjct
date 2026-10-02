@@ -13,6 +13,7 @@ import Spinner from '@/components/ui/spinner';
 import EmptyState from '@/components/ui/empty-state';
 import type { Location } from '@/lib/types';
 import type { ScheduledResponse, ScheduledOrder } from '@/features/kitchen/types';
+import { DeliveryTag } from '@/features/kitchen/delivery-badges';
 
 /**
  * Future-dated orders — everything the kitchen does not need today.
@@ -123,6 +124,7 @@ export default function ScheduledOrders() {
                 <li key={order.id} className="px-4 py-3">
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                     <span className="text-lg font-extrabold text-primary-dark">{formatOrderNumber(order)}</span>
+                    {order.fulfillment_type === 'DELIVERY' && <DeliveryTag compact />}
                     {order.is_priority ? <Flame size={16} className="text-red-600" /> : null}
                     <span className="inline-flex items-center gap-1 rounded-full bg-[#FFF1DC] px-2.5 py-1 text-xs font-bold text-[#A86A4A]">
                       <Clock3 size={12} />

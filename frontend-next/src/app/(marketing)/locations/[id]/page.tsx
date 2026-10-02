@@ -92,7 +92,7 @@ export default async function LocationDetailPage({
             href={`/order?location=${loc.id}`}
             className="mt-8 inline-flex items-center gap-2 rounded-full bg-accent px-7 py-3.5 text-base font-bold text-primary-dark shadow-[var(--shadow-warm)] transition-colors hover:bg-accent-hover hover:text-text-inverse"
           >
-            Order &amp; pick up here
+            Order from this location
             <ArrowRight size={18} />
           </Link>
         </div>

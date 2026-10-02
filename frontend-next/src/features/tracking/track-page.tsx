@@ -6,6 +6,7 @@ import Link from 'next/link';
 import {
   CreditCard, ChefHat, Bell, CheckCircle, Package,
   MapPin, ArrowRight, Search, ShoppingBag, Navigation,
+  Bike, Home, UserCheck,
 } from 'lucide-react';
 import { useLang } from '@/providers/lang-provider';
 import { useAnnounce } from '@/providers/announcer-provider';
@@ -21,6 +22,7 @@ import Input from '@/components/ui/input';
 import Badge from '@/components/ui/badge';
 import Spinner from '@/components/ui/spinner';
 import Modal from '@/components/ui/modal';
+import DeliveryTrackingCard from '@/features/delivery/delivery-tracking-card';
 import type { Location, Order, OrderItemsResponse } from '@/lib/types';
 
 type DirectionUrls = { address: string; google: string; apple: string; waze: string };
@@ -90,18 +92,48 @@ function DirectionsModal({
   );
 }
 
-const STEPS = [
+type TimelineStep = { key: string; icon: typeof CreditCard; label: string };
+
+const STEPS: TimelineStep[] = [
   { key: 'PAID', icon: CreditCard, label: 'Paid' },
   { key: 'PREPARING', icon: ChefHat, label: 'Preparing' },
   { key: 'READY', icon: Bell, label: 'Ready' },
   { key: 'COMPLETED', icon: CheckCircle, label: 'Completed' },
-] as const;
+];
 
-function StatusTimeline({ currentStatus }: { currentStatus: string }) {
-  const currentIdx = STEPS.findIndex((s) => s.key === currentStatus);
+/**
+ * Delivery orders track two lifecycles on one line: the kitchen's (order
+ * status, controlled by Rollecito) then the courier's (delivery status,
+ * controlled by the provider).
+ */
+const DELIVERY_STEPS: TimelineStep[] = [
+  { key: 'CONFIRMED', icon: CheckCircle, label: 'Order confirmed' },
+  { key: 'PREPARING', icon: ChefHat, label: 'Preparing' },
+  { key: 'READY', icon: Bell, label: 'Ready' },
+  { key: 'COURIER', icon: UserCheck, label: 'Courier assigned' },
+  { key: 'OUT', icon: Bike, label: 'Out for delivery' },
+  { key: 'DELIVERED', icon: Home, label: 'Delivered' },
+];
+
+const KITCHEN_PROGRESS: Record<string, number> = { PAID: 0, PREPARING: 1, READY: 2, COMPLETED: 2 };
+const COURIER_PROGRESS: Record<string, number> = {
+  COURIER_ASSIGNED: 3, PICKUP: 3, PICKUP_COMPLETE: 4, DROPOFF: 4, DELIVERED: 5,
+};
+
+function deliveryProgress(order: Order): number {
+  // The furthest either side has got: a courier can collect the food before
+  // staff remember to tap "Ready", and the customer should see reality.
+  return Math.max(
+    KITCHEN_PROGRESS[order.status_name] ?? -1,
+    COURIER_PROGRESS[order.delivery_status ?? ''] ?? -1,
+  );
+}
+
+function StatusTimeline({ currentStatus, steps = STEPS, currentIndex }: { currentStatus?: string; steps?: TimelineStep[]; currentIndex?: number }) {
+  const currentIdx = currentIndex ?? steps.findIndex((s) => s.key === currentStatus);
   return (
-    <ol aria-label="Order progress" className="flex w-full items-center justify-between">
-      {STEPS.map((step, idx) => {
+    <ol aria-label="Order progress" className="flex w-full items-start justify-between">
+      {steps.map((step, idx) => {
         const done = idx <= currentIdx;
         const active = idx === currentIdx;
         const Icon = step.icon;
@@ -126,7 +158,7 @@ function StatusTimeline({ currentStatus }: { currentStatus: string }) {
             >
               <Icon size={18} aria-hidden="true" />
             </div>
-            <span className={`mt-1.5 text-xs font-medium ${active ? 'text-primary-dark' : done ? 'text-primary' : 'text-text-secondary'}`}>
+            <span className={`mt-1.5 text-center text-xs font-medium ${active ? 'text-primary-dark' : done ? 'text-primary' : 'text-text-secondary'}`}>
               {step.label}
               <span className="sr-only">, {state}</span>
             </span>
@@ -195,13 +227,28 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
     '/kitchen',
     order ? { location_id: order.location_id } : undefined,
     order
-      ? { order_paid: onOrderEvent, order_updated: onOrderEvent, order_ready: onOrderEvent }
+      ? {
+          order_paid: onOrderEvent,
+          order_updated: onOrderEvent,
+          order_ready: onOrderEvent,
+          // Courier updates pushed from the provider webhook — no polling of
+          // the provider from the browser.
+          delivery_updated: onOrderEvent,
+        }
       : undefined,
   );
 
+  const isDelivery = order?.fulfillment_type === 'DELIVERY';
+  const deliveryStep = order && isDelivery ? deliveryProgress(order) : -1;
+  const deliveryEnded = order?.delivery_status === 'CANCELED' || order?.delivery_status === 'RETURNED';
+
   const statusHeading = !order
     ? null
-    : order.status_name === 'COMPLETED'
+    : isDelivery && deliveryEnded
+      ? 'Delivery canceled'
+      : isDelivery && deliveryStep >= 3
+        ? DELIVERY_STEPS[deliveryStep].label
+        : order.status_name === 'COMPLETED'
       ? t.tracking.completed
       : order.status_name === 'READY'
         ? t.tracking.ready
@@ -250,30 +297,39 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
           {t.tracking.order} {formatOrderNumber(order)}
         </p>
         <h1 className="mb-6 text-2xl font-bold text-text">{statusHeading}</h1>
-        <StatusTimeline currentStatus={order.status_name} />
-      </Card>
-
-      <Card>
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-light">
-            <MapPin size={20} className="text-primary" aria-hidden="true" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h2 className="text-sm font-medium text-text">{t.tracking.pickupAt}</h2>
-            <p className="text-sm font-semibold text-primary-dark">{order.location_name}</p>
-            {orderLocation && (
-              <p className="mt-0.5 text-xs text-text-secondary">
-                {orderLocation.address}, {orderLocation.city}, {orderLocation.state} {orderLocation.zip_code}
-              </p>
-            )}
-          </div>
-        </div>
-        {orderLocation && (
-          <Button type="button" variant="outline" size="sm" className="mt-3 w-full" aria-haspopup="dialog" onClick={() => setShowDirections(true)}>
-            <Navigation size={14} aria-hidden="true" /> Get directions
-          </Button>
+        {isDelivery ? (
+          <StatusTimeline steps={DELIVERY_STEPS} currentIndex={deliveryStep} />
+        ) : (
+          <StatusTimeline currentStatus={order.status_name} />
         )}
       </Card>
+
+      {isDelivery ? (
+        <DeliveryTrackingCard order={order} />
+      ) : (
+        <Card>
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-light">
+              <MapPin size={20} className="text-primary" aria-hidden="true" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-sm font-medium text-text">{t.tracking.pickupAt}</h2>
+              <p className="text-sm font-semibold text-primary-dark">{order.location_name}</p>
+              {orderLocation && (
+                <p className="mt-0.5 text-xs text-text-secondary">
+                  {orderLocation.address}, {orderLocation.city}, {orderLocation.state} {orderLocation.zip_code}
+                </p>
+              )}
+            </div>
+          </div>
+          {orderLocation && (
+            <Button type="button" variant="outline" size="sm" className="mt-3 w-full" aria-haspopup="dialog" onClick={() => setShowDirections(true)}>
+              <Navigation size={14} aria-hidden="true" /> Get directions
+            </Button>
+          )}
+        </Card>
+
+      )}
 
       <DirectionsModal open={showDirections} onClose={() => setShowDirections(false)} location={orderLocation} />
 
@@ -312,7 +368,13 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
             );
           })}
         </ul>
-        <div className="mt-4 flex justify-between border-t border-border pt-3">
+        {isDelivery && Number(order.delivery_fee) > 0 && (
+          <div className="mt-4 flex justify-between border-t border-border pt-3 text-sm text-text-secondary">
+            <span>Delivery</span>
+            <span>{formatCurrency(Number(order.delivery_fee))}</span>
+          </div>
+        )}
+        <div className={`flex justify-between border-t border-border pt-3 ${isDelivery && Number(order.delivery_fee) > 0 ? 'mt-2' : 'mt-4'}`}>
           <span className="font-semibold text-text">{t.tracking.total}</span>
           <span className="font-bold text-primary-dark">{formatCurrency(order.total_amount)}</span>
         </div>

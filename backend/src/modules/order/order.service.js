@@ -11,7 +11,22 @@ function emitOrderEvent(eventName, locationId, data) {
   }
 }
 
-async function create({ locationId, userId, guestName, guestPhone, pickupTime, notes }) {
+async function create({
+  locationId, userId, guestName, guestPhone, pickupTime, notes, fulfillmentType = 'PICKUP', delivery = null,
+}) {
+  const isDelivery = fulfillmentType === 'DELIVERY';
+  const deliveryService = isDelivery ? require('../delivery/delivery.service') : null;
+
+  // Validate the accepted quote BEFORE creating the order row, so an expired or
+  // foreign quote never leaves a half-built order behind.
+  if (isDelivery) {
+    await deliveryService.assertQuoteForNewOrder({
+      quoteId: delivery?.quoteId,
+      locationId,
+      pickupTime,
+    });
+  }
+
   const result = await db.call('sp_order_create', [
     locationId,
     userId || null,
@@ -22,6 +37,19 @@ async function create({ locationId, userId, guestName, guestPhone, pickupTime, n
   ]);
   const rows = Array.isArray(result[0]) ? result[0] : result;
   const order = rows[0];
+
+  if (isDelivery) {
+    const deliveryRow = await deliveryService.attachToOrder(order.id, {
+      quoteId: delivery.quoteId,
+      dropoffName: guestName || 'Customer',
+      dropoffPhone: delivery.phone,
+      dropoffNotes: delivery.notes,
+    });
+    order.fulfillment_type = 'DELIVERY';
+    order.delivery_fee = deliveryRow.customer_delivery_fee;
+  } else {
+    order.fulfillment_type = 'PICKUP';
+  }
 
   emitOrderEvent('order_created', locationId, {
     order_id: order.id,
@@ -154,6 +182,15 @@ async function cancel(orderId, reason) {
   const result = await db.call('sp_order_cancel', [orderId, reason]);
   const rows = Array.isArray(result[0]) ? result[0] : result;
   const order = rows[0];
+
+  // Call off the courier too. Best effort — never blocks the cancellation.
+  if (current.fulfillment_type === 'DELIVERY') {
+    try {
+      await require('../delivery/delivery.service').cancelForOrder(orderId);
+    } catch (err) {
+      console.error(`[Delivery] Could not cancel delivery for order ${orderId}:`, err.message);
+    }
+  }
 
   emitOrderEvent('order_canceled', current.location_id, {
     order_id: parseInt(orderId, 10),

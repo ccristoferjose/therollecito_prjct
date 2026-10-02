@@ -628,10 +628,14 @@ BEGIN
   DECLARE v_is_active       TINYINT(1);
   DECLARE v_starts_at       DATETIME;
   DECLARE v_expires_at      DATETIME;
+  DECLARE v_fulfillment     VARCHAR(20);
+  DECLARE v_delivery_fee    DECIMAL(10, 2) DEFAULT 0.00;
+  DECLARE v_chargeable      DECIMAL(10, 2);
 
   DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; RESIGNAL; END;
 
-  SELECT os.name, o.user_id INTO v_status_name, v_user_id
+  SELECT os.name, o.user_id, o.fulfillment_type
+    INTO v_status_name, v_user_id, v_fulfillment
     FROM `order` o JOIN order_status os ON os.id = o.status_id
    WHERE o.id = p_order_id LIMIT 1;
   IF v_status_name IS NULL THEN
@@ -706,23 +710,38 @@ BEGIN
     SET v_pre_fee_total = 0;
   END IF;
 
+  -- Delivery fee (migration 008). Read from the accepted quote on the delivery
+  -- row — never from the caller — and kept as its own line: promotions discount
+  -- the food subtotal only, and a pickup order always gets 0.00 here.
+  IF v_fulfillment = 'DELIVERY' THEN
+    SELECT customer_delivery_fee INTO v_delivery_fee
+      FROM delivery WHERE order_id = p_order_id LIMIT 1;
+    IF v_delivery_fee IS NULL THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Delivery order has no accepted delivery quote.';
+    END IF;
+  END IF;
+
+  SET v_chargeable = v_pre_fee_total + v_delivery_fee;
+
   -- Processing fee: only apply when there's something to charge. When the
   -- order ends up free (e.g. 100%-off promo) the customer pays nothing and
-  -- we don't synthesize a fake fee on top.
-  IF v_pre_fee_total > 0 AND (p_fee_percent IS NOT NULL OR p_fee_fixed IS NOT NULL) THEN
+  -- we don't synthesize a fake fee on top. Stripe charges on the whole amount,
+  -- so the delivery fee is part of the base.
+  IF v_chargeable > 0 AND (p_fee_percent IS NOT NULL OR p_fee_fixed IS NOT NULL) THEN
     SET v_processing_fee = ROUND(
-      v_pre_fee_total * COALESCE(p_fee_percent, 0) + COALESCE(p_fee_fixed, 0),
+      v_chargeable * COALESCE(p_fee_percent, 0) + COALESCE(p_fee_fixed, 0),
       2
     );
   END IF;
 
-  SET v_total = v_pre_fee_total + v_processing_fee;
+  SET v_total = v_chargeable + v_processing_fee;
 
   START TRANSACTION;
   UPDATE `order`
      SET subtotal_amount = v_subtotal,
          discount_amount = v_discount_amount,
          processing_fee  = v_processing_fee,
+         delivery_fee    = v_delivery_fee,
          total_amount    = v_total,
          promotion_id    = v_promotion_id,
          promotion_code  = CASE WHEN v_promotion_id IS NULL THEN NULL ELSE UPPER(TRIM(p_promotion_code)) END
@@ -733,6 +752,7 @@ BEGIN
          v_subtotal AS subtotal_amount,
          v_discount_amount AS discount_amount,
          v_processing_fee AS processing_fee,
+         v_delivery_fee AS delivery_fee,
          v_total AS total_amount,
          v_promotion_id AS promotion_id,
          CASE WHEN v_promotion_id IS NULL THEN NULL ELSE UPPER(TRIM(p_promotion_code)) END AS promotion_code;
@@ -843,6 +863,7 @@ BEGIN
          o.tracking_code, o.display_number,
          o.guest_name, o.guest_phone, o.pickup_time,
          o.total_amount, o.subtotal_amount, o.discount_amount, o.processing_fee,
+         o.fulfillment_type, o.delivery_fee,
          o.promotion_id, o.promotion_code,
          o.notes, o.is_priority, o.priority_set_at, o.priority_reason,
          o.created_at, o.updated_at
@@ -957,11 +978,23 @@ BEGIN
          o.total_amount, o.subtotal_amount, o.discount_amount, o.processing_fee,
          o.promotion_code,
          o.notes, o.created_at, o.updated_at,
-         p.status AS payment_status
+         p.status AS payment_status,
+         -- Delivery (migration 008). NULL for pickup orders. The tracking code
+         -- is the secret here, so the customer's own address is fine to return.
+         o.fulfillment_type, o.delivery_fee,
+         d.status AS delivery_status, d.tracking_url AS delivery_tracking_url,
+         d.pickup_eta AS delivery_pickup_eta, d.dropoff_eta AS delivery_dropoff_eta,
+         d.street_address AS delivery_street_address, d.apartment AS delivery_apartment,
+         d.city AS delivery_city, d.state AS delivery_state, d.zip_code AS delivery_zip_code,
+         -- Courier (migration 009): what the provider's own tracking page shows.
+         d.courier_name, d.courier_image_url, d.courier_vehicle, d.courier_vehicle_type,
+         d.courier_license_plate, d.courier_rating, d.courier_imminent,
+         d.undeliverable_reason AS delivery_undeliverable_reason
     FROM `order` o
     JOIN order_status os ON os.id = o.status_id
     JOIN location l ON l.id = o.location_id
     LEFT JOIN payment p ON p.order_id = o.id
+    LEFT JOIN delivery d ON d.order_id = o.id
    WHERE o.tracking_code = p_tracking_code;
 END //
 
@@ -2614,11 +2647,18 @@ BEGIN
          o.is_priority, o.priority_set_at, o.priority_reason,
          u.first_name AS user_first_name, u.last_name AS user_last_name,
          u.email AS user_email, u.phone AS user_phone,
-         t.bucket, t.prepare_at
+         t.bucket, t.prepare_at,
+         -- Delivery (migration 008): courier state is shown, never acted on.
+         o.fulfillment_type, d.status AS delivery_status,
+         d.pickup_ready_at AS delivery_pickup_ready_at,
+         d.pickup_eta AS delivery_pickup_eta, d.dropoff_eta AS delivery_dropoff_eta,
+         d.last_error_code AS delivery_error_code,
+         d.courier_name AS delivery_courier_name, d.courier_imminent AS delivery_courier_imminent
     FROM tmp_kitchen_board t
     JOIN `order` o        ON o.id = t.order_id
     JOIN order_status os  ON os.id = o.status_id
     LEFT JOIN `user` u    ON u.id = o.user_id
+    LEFT JOIN delivery d  ON d.order_id = o.id
    ORDER BY o.is_priority DESC,
             CASE WHEN o.is_priority = 1 THEN o.priority_set_at ELSE t.prepare_at END ASC;
 
@@ -2661,7 +2701,7 @@ BEGIN
   -- are joined — the kitchen cannot act on these yet.
   -- ---------------------------------------------------------------------------
   SELECT o.id, o.display_number, o.guest_name, o.total_amount,
-         o.pickup_time, o.created_at, o.notes,
+         o.pickup_time, o.created_at, o.notes, o.fulfillment_type,
          u.first_name AS user_first_name, u.last_name AS user_last_name,
          COALESCE(
            DATE_SUB(o.pickup_time, INTERVAL COALESCE(sp.prep_time_minutes, 0) MINUTE),
@@ -2754,7 +2794,8 @@ BEGIN
          u.first_name AS user_first_name, u.last_name AS user_last_name,
          u.email AS user_email, u.phone AS user_phone,
          t.prepare_at,
-         DATE(t.prepare_at) AS prepare_date
+         DATE(t.prepare_at) AS prepare_date,
+         o.fulfillment_type
     FROM tmp_kitchen_scheduled t
     JOIN `order` o       ON o.id = t.order_id
     JOIN order_status os ON os.id = o.status_id
@@ -3041,6 +3082,545 @@ BEGIN
   END IF;
 
   CALL sp_promo_campaign_get(p_id);
+END //
+
+
+-- #############################################################################
+-- #  SECTION: DELIVERY (migration 008)
+-- #############################################################################
+--
+-- Delivery is a second fulfillment method fulfilled by a courier provider
+-- (Uber Direct today). Two lifecycles, kept apart on purpose:
+--
+--   order.status_id  -> kitchen: CREATED -> PAID -> PREPARING -> READY -> COMPLETED
+--   delivery.status  -> courier: QUOTED -> DISPATCHING -> PENDING -> COURIER_ASSIGNED
+--                       -> PICKUP -> PICKUP_COMPLETE -> DROPOFF -> DELIVERED
+--                       (FAILED = dispatch failed, retryable; CANCELED / RETURNED)
+--
+-- Nothing in this section touches order.status_id.
+-- #############################################################################
+
+-- Location fields needed to build a courier pickup (includes coordinates).
+DROP PROCEDURE IF EXISTS sp_location_get_for_delivery //
+CREATE PROCEDURE sp_location_get_for_delivery(IN p_location_id INT UNSIGNED)
+BEGIN
+  SELECT id, name, address, city, state, zip_code, phone,
+         latitude, longitude, is_active
+    FROM location
+   WHERE id = p_location_id;
+END //
+
+-- Store geocoded coordinates for a location's pickup point.
+DROP PROCEDURE IF EXISTS sp_location_set_coordinates //
+CREATE PROCEDURE sp_location_set_coordinates(
+  IN p_location_id INT UNSIGNED,
+  IN p_latitude    DECIMAL(9, 6),
+  IN p_longitude   DECIMAL(9, 6)
+)
+BEGIN
+  IF p_latitude IS NULL OR p_longitude IS NULL
+     OR p_latitude NOT BETWEEN -90 AND 90 OR p_longitude NOT BETWEEN -180 AND 180 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Invalid coordinates.';
+  END IF;
+  UPDATE location SET latitude = p_latitude, longitude = p_longitude
+   WHERE id = p_location_id;
+  SELECT id, latitude, longitude FROM location WHERE id = p_location_id;
+END //
+
+-- Record a provider quote. Returns the stored row.
+DROP PROCEDURE IF EXISTS sp_delivery_quote_create //
+CREATE PROCEDURE sp_delivery_quote_create(
+  IN p_provider               VARCHAR(30),
+  IN p_provider_quote_id      VARCHAR(100),
+  IN p_location_id            INT UNSIGNED,
+  IN p_street_address         VARCHAR(255),
+  IN p_apartment              VARCHAR(100),
+  IN p_city                   VARCHAR(100),
+  IN p_state                  VARCHAR(50),
+  IN p_zip_code               VARCHAR(20),
+  IN p_country                CHAR(2),
+  IN p_latitude               DECIMAL(9, 6),
+  IN p_longitude              DECIMAL(9, 6),
+  IN p_provider_fee           DECIMAL(10, 2),
+  IN p_customer_delivery_fee  DECIMAL(10, 2),
+  IN p_currency               CHAR(3),
+  IN p_pickup_ready_at        DATETIME,
+  IN p_dropoff_eta            DATETIME,
+  IN p_duration_minutes       SMALLINT UNSIGNED,
+  IN p_pickup_duration_minutes SMALLINT UNSIGNED,
+  IN p_expires_at             DATETIME
+)
+BEGIN
+  IF p_provider_quote_id IS NULL OR CHAR_LENGTH(TRIM(p_provider_quote_id)) = 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'provider_quote_id is required.';
+  END IF;
+  IF p_provider_fee IS NULL OR p_provider_fee < 0
+     OR p_customer_delivery_fee IS NULL OR p_customer_delivery_fee < 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Delivery fees must be zero or greater.';
+  END IF;
+  IF p_expires_at IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Quote expiration is required.';
+  END IF;
+
+  INSERT INTO delivery_quote (
+    provider, provider_quote_id, location_id,
+    street_address, apartment, city, state, zip_code, country, latitude, longitude,
+    provider_fee, customer_delivery_fee, currency,
+    pickup_ready_at, dropoff_eta, duration_minutes, pickup_duration_minutes, expires_at
+  ) VALUES (
+    p_provider, p_provider_quote_id, p_location_id,
+    TRIM(p_street_address), NULLIF(TRIM(p_apartment), ''), TRIM(p_city), UPPER(TRIM(p_state)),
+    TRIM(p_zip_code), COALESCE(p_country, 'US'), p_latitude, p_longitude,
+    p_provider_fee, p_customer_delivery_fee, UPPER(COALESCE(p_currency, 'USD')),
+    p_pickup_ready_at, p_dropoff_eta, p_duration_minutes, p_pickup_duration_minutes, p_expires_at
+  );
+
+  SELECT * FROM delivery_quote WHERE id = LAST_INSERT_ID();
+END //
+
+DROP PROCEDURE IF EXISTS sp_delivery_quote_get //
+CREATE PROCEDURE sp_delivery_quote_get(
+  IN p_provider          VARCHAR(30),
+  IN p_provider_quote_id VARCHAR(100)
+)
+BEGIN
+  SELECT * FROM delivery_quote
+   WHERE provider = p_provider AND provider_quote_id = p_provider_quote_id
+   LIMIT 1;
+END //
+
+-- Turn a freshly created (CREATED) order into a DELIVERY order using a stored,
+-- unexpired quote for the same location. The fee is copied from the quote row,
+-- never from the caller.
+DROP PROCEDURE IF EXISTS sp_delivery_create_for_order //
+CREATE PROCEDURE sp_delivery_create_for_order(
+  IN p_order_id          INT UNSIGNED,
+  IN p_provider          VARCHAR(30),
+  IN p_provider_quote_id VARCHAR(100),
+  IN p_dropoff_name      VARCHAR(150),
+  IN p_dropoff_phone     VARCHAR(20),
+  IN p_dropoff_notes     VARCHAR(280)
+)
+BEGIN
+  DECLARE v_status_name  VARCHAR(50);
+  DECLARE v_location_id  INT UNSIGNED;
+  DECLARE v_quote_row_id INT UNSIGNED;
+
+  DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; RESIGNAL; END;
+
+  IF p_dropoff_name IS NULL OR CHAR_LENGTH(TRIM(p_dropoff_name)) = 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'A recipient name is required for delivery.';
+  END IF;
+  IF p_dropoff_phone IS NULL OR CHAR_LENGTH(TRIM(p_dropoff_phone)) = 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'A phone number is required for delivery.';
+  END IF;
+
+  START TRANSACTION;
+
+  SELECT os.name, o.location_id INTO v_status_name, v_location_id
+    FROM `order` o JOIN order_status os ON os.id = o.status_id
+   WHERE o.id = p_order_id
+   FOR UPDATE;
+  IF v_status_name IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Order not found.';
+  END IF;
+  IF v_status_name <> 'CREATED' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Order is no longer editable.';
+  END IF;
+  IF EXISTS (SELECT 1 FROM delivery WHERE order_id = p_order_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Order already has a delivery.';
+  END IF;
+
+  SELECT id INTO v_quote_row_id
+    FROM delivery_quote
+   WHERE provider = p_provider AND provider_quote_id = p_provider_quote_id
+     AND location_id = v_location_id
+   LIMIT 1;
+  IF v_quote_row_id IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Delivery quote not found for this location.';
+  END IF;
+  IF (SELECT expires_at FROM delivery_quote WHERE id = v_quote_row_id) <= NOW() THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Delivery quote has expired.';
+  END IF;
+
+  INSERT INTO delivery (
+    order_id, provider, delivery_quote_id, quote_id, quote_expires_at,
+    provider_fee, customer_delivery_fee, currency, status, pickup_ready_at, dropoff_eta,
+    street_address, apartment, city, state, zip_code, country, latitude, longitude,
+    dropoff_name, dropoff_phone, dropoff_notes
+  )
+  SELECT p_order_id, q.provider, q.id, q.provider_quote_id, q.expires_at,
+         q.provider_fee, q.customer_delivery_fee, q.currency, 'QUOTED', q.pickup_ready_at, q.dropoff_eta,
+         q.street_address, q.apartment, q.city, q.state, q.zip_code, q.country, q.latitude, q.longitude,
+         TRIM(p_dropoff_name), TRIM(p_dropoff_phone), NULLIF(TRIM(p_dropoff_notes), '')
+    FROM delivery_quote q
+   WHERE q.id = v_quote_row_id;
+
+  UPDATE `order` o
+    JOIN delivery_quote q ON q.id = v_quote_row_id
+     SET o.fulfillment_type = 'DELIVERY',
+         o.delivery_fee     = q.customer_delivery_fee
+   WHERE o.id = p_order_id;
+
+  COMMIT;
+
+  SELECT * FROM delivery WHERE order_id = p_order_id;
+END //
+
+-- Swap the accepted quote on a not-yet-paid delivery order (quote expired and
+-- the customer accepted a fresh one). The new quote must price the SAME address.
+DROP PROCEDURE IF EXISTS sp_delivery_apply_quote //
+CREATE PROCEDURE sp_delivery_apply_quote(
+  IN p_order_id          INT UNSIGNED,
+  IN p_provider          VARCHAR(30),
+  IN p_provider_quote_id VARCHAR(100)
+)
+BEGIN
+  DECLARE v_status_name   VARCHAR(50);
+  DECLARE v_location_id   INT UNSIGNED;
+  DECLARE v_delivery_st   VARCHAR(30);
+  DECLARE v_quote_row_id  INT UNSIGNED;
+
+  DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN ROLLBACK; RESIGNAL; END;
+
+  START TRANSACTION;
+
+  SELECT os.name, o.location_id INTO v_status_name, v_location_id
+    FROM `order` o JOIN order_status os ON os.id = o.status_id
+   WHERE o.id = p_order_id
+   FOR UPDATE;
+  IF v_status_name IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Order not found.';
+  END IF;
+  IF v_status_name <> 'CREATED' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Order is no longer editable.';
+  END IF;
+
+  SELECT status INTO v_delivery_st FROM delivery WHERE order_id = p_order_id FOR UPDATE;
+  IF v_delivery_st IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Order is not a delivery order.';
+  END IF;
+  IF v_delivery_st <> 'QUOTED' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Delivery has already been dispatched.';
+  END IF;
+
+  SELECT q.id INTO v_quote_row_id
+    FROM delivery_quote q
+    JOIN delivery d ON d.order_id = p_order_id
+   WHERE q.provider = p_provider AND q.provider_quote_id = p_provider_quote_id
+     AND q.location_id = v_location_id
+     AND q.street_address = d.street_address
+     AND COALESCE(q.apartment, '') = COALESCE(d.apartment, '')
+     AND q.city = d.city AND q.state = d.state AND q.zip_code = d.zip_code
+   LIMIT 1;
+  IF v_quote_row_id IS NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Delivery quote does not match this order.';
+  END IF;
+  IF (SELECT expires_at FROM delivery_quote WHERE id = v_quote_row_id) <= NOW() THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Delivery quote has expired.';
+  END IF;
+
+  UPDATE delivery d
+    JOIN delivery_quote q ON q.id = v_quote_row_id
+     SET d.delivery_quote_id     = q.id,
+         d.quote_id              = q.provider_quote_id,
+         d.quote_expires_at      = q.expires_at,
+         d.provider_fee          = q.provider_fee,
+         d.customer_delivery_fee = q.customer_delivery_fee,
+         d.currency              = q.currency,
+         d.pickup_ready_at       = q.pickup_ready_at,
+         d.dropoff_eta           = q.dropoff_eta
+   WHERE d.order_id = p_order_id;
+
+  UPDATE `order` o
+    JOIN delivery_quote q ON q.id = v_quote_row_id
+     SET o.delivery_fee = q.customer_delivery_fee
+   WHERE o.id = p_order_id;
+
+  COMMIT;
+
+  SELECT * FROM delivery WHERE order_id = p_order_id;
+END //
+
+-- Everything needed to dispatch / display a delivery. One row, or none.
+DROP PROCEDURE IF EXISTS sp_delivery_get_by_order //
+CREATE PROCEDURE sp_delivery_get_by_order(IN p_order_id INT UNSIGNED)
+BEGIN
+  SELECT d.*,
+         o.location_id, os.name AS order_status, o.display_number, o.tracking_code,
+         o.pickup_time, o.subtotal_amount, o.promotion_code, o.fulfillment_type
+    FROM delivery d
+    JOIN `order` o ON o.id = d.order_id
+    JOIN order_status os ON os.id = o.status_id
+   WHERE d.order_id = p_order_id;
+END //
+
+-- Idempotent dispatch claim. Exactly one caller gets claimed = 1 for a given
+-- order: the Stripe webhook and the browser's /payments/confirm race each other
+-- on every payment, and both try to dispatch. The single-row UPDATE is atomic
+-- under InnoDB's row lock, so the loser sees 0 rows changed and backs off.
+--
+-- A claim left in DISPATCHING longer than p_stale_minutes (process died mid
+-- call) can be re-claimed; the provider-side idempotency key keeps that safe.
+DROP PROCEDURE IF EXISTS sp_delivery_claim_dispatch //
+CREATE PROCEDURE sp_delivery_claim_dispatch(
+  IN p_order_id      INT UNSIGNED,
+  IN p_stale_minutes SMALLINT UNSIGNED
+)
+BEGIN
+  UPDATE delivery d
+    JOIN `order` o ON o.id = d.order_id
+    JOIN order_status os ON os.id = o.status_id
+     SET d.status = 'DISPATCHING',
+         d.dispatch_attempts = d.dispatch_attempts + 1,
+         d.last_error_code = NULL
+   WHERE d.order_id = p_order_id
+     AND d.provider_delivery_id IS NULL
+     AND os.name IN ('PAID', 'PREPARING', 'READY')
+     AND (
+           d.status IN ('QUOTED', 'FAILED')
+        OR (d.status = 'DISPATCHING'
+            AND d.updated_at < NOW() - INTERVAL COALESCE(p_stale_minutes, 5) MINUTE)
+     );
+
+  SELECT ROW_COUNT() AS claimed;
+END //
+
+DROP PROCEDURE IF EXISTS sp_delivery_mark_dispatched //
+CREATE PROCEDURE sp_delivery_mark_dispatched(
+  IN p_order_id             INT UNSIGNED,
+  IN p_provider_delivery_id VARCHAR(100),
+  IN p_status               VARCHAR(30),
+  IN p_provider_fee         DECIMAL(10, 2),
+  IN p_tracking_url         VARCHAR(500),
+  IN p_pickup_eta           DATETIME,
+  IN p_dropoff_eta          DATETIME
+)
+BEGIN
+  IF p_provider_delivery_id IS NULL OR CHAR_LENGTH(TRIM(p_provider_delivery_id)) = 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'provider_delivery_id is required.';
+  END IF;
+
+  -- A webhook may already have advanced the status past PENDING; only take
+  -- p_status while the row is still ours (DISPATCHING / FAILED).
+  UPDATE delivery
+     SET provider_delivery_id = p_provider_delivery_id,
+         status        = CASE WHEN status IN ('DISPATCHING', 'FAILED', 'QUOTED')
+                              THEN COALESCE(p_status, 'PENDING') ELSE status END,
+         provider_fee  = COALESCE(p_provider_fee, provider_fee),
+         tracking_url  = COALESCE(p_tracking_url, tracking_url),
+         pickup_eta    = COALESCE(p_pickup_eta, pickup_eta),
+         dropoff_eta   = COALESCE(p_dropoff_eta, dropoff_eta),
+         last_error_code = NULL
+   WHERE order_id = p_order_id;
+
+  SELECT * FROM delivery WHERE order_id = p_order_id;
+END //
+
+DROP PROCEDURE IF EXISTS sp_delivery_mark_failed //
+CREATE PROCEDURE sp_delivery_mark_failed(
+  IN p_order_id   INT UNSIGNED,
+  IN p_error_code VARCHAR(60)
+)
+BEGIN
+  UPDATE delivery
+     SET status = 'FAILED', last_error_code = LEFT(p_error_code, 60)
+   WHERE order_id = p_order_id AND status = 'DISPATCHING';
+
+  SELECT * FROM delivery WHERE order_id = p_order_id;
+END //
+
+-- Apply a courier update from the provider (event.delivery_status and
+-- event.courier_update webhooks). Two ordering rules, because webhooks arrive
+-- out of order and courier updates arrive often:
+--
+--   * status is forward-only by rank — a late "pickup" never undoes "dropoff";
+--   * ETAs, tracking URL and courier details only apply when the event is not
+--     older than the last one applied (p_provider_updated_at, the provider's
+--     own "updated" time).
+--
+-- p_courier_mode: 'SET' = replace courier details, 'CLEAR' = the provider says
+-- no courier (e.g. reassigned), NULL = the event says nothing about the courier.
+--
+-- Returns `notify` = 1 only when something a customer or the kitchen would see
+-- changed (status, courier, "arriving now", tracking link, or an ETA moving by
+-- a minute or more). Pure location pings return 0, so the caller does not push
+-- a socket update for every one of them.
+--
+-- Lookup is by provider_delivery_id, falling back to p_order_id (our external
+-- id) for a webhook that beats sp_delivery_mark_dispatched.
+DROP PROCEDURE IF EXISTS sp_delivery_apply_provider_update //
+CREATE PROCEDURE sp_delivery_apply_provider_update(
+  IN p_provider              VARCHAR(30),
+  IN p_provider_delivery_id  VARCHAR(100),
+  IN p_order_id              INT UNSIGNED,
+  IN p_status                VARCHAR(30),
+  IN p_tracking_url          VARCHAR(500),
+  IN p_pickup_eta            DATETIME,
+  IN p_dropoff_eta           DATETIME,
+  IN p_courier_mode          VARCHAR(5),
+  IN p_courier_name          VARCHAR(100),
+  IN p_courier_image_url     VARCHAR(500),
+  IN p_courier_vehicle       VARCHAR(150),
+  IN p_courier_vehicle_type  VARCHAR(30),
+  IN p_courier_license_plate VARCHAR(20),
+  IN p_courier_rating        DECIMAL(3, 2),
+  IN p_courier_imminent      TINYINT(1),
+  IN p_undeliverable_reason  VARCHAR(100),
+  IN p_provider_updated_at   DATETIME(3)
+)
+BEGIN
+  DECLARE v_delivery_id   INT UNSIGNED;
+  DECLARE v_status        VARCHAR(30);
+  DECLARE v_courier       VARCHAR(100);
+  DECLARE v_imminent      TINYINT(1);
+  DECLARE v_tracking      VARCHAR(500);
+  DECLARE v_pickup_eta    DATETIME;
+  DECLARE v_dropoff_eta   DATETIME;
+  DECLARE v_last_update   DATETIME(3);
+  DECLARE v_cur_rank      TINYINT;
+  DECLARE v_new_rank      TINYINT;
+  DECLARE v_fresh         TINYINT(1);
+  DECLARE v_notify        TINYINT(1) DEFAULT 0;
+
+  SELECT id INTO v_delivery_id
+    FROM delivery
+   WHERE provider = p_provider AND provider_delivery_id = p_provider_delivery_id
+   LIMIT 1;
+
+  IF v_delivery_id IS NULL AND p_order_id IS NOT NULL THEN
+    SELECT id INTO v_delivery_id
+      FROM delivery
+     WHERE order_id = p_order_id AND provider = p_provider
+       AND (provider_delivery_id IS NULL OR provider_delivery_id = p_provider_delivery_id)
+     LIMIT 1;
+  END IF;
+
+  IF v_delivery_id IS NOT NULL THEN
+    SELECT status, courier_name, courier_imminent, tracking_url, pickup_eta, dropoff_eta, provider_updated_at
+      INTO v_status, v_courier, v_imminent, v_tracking, v_pickup_eta, v_dropoff_eta, v_last_update
+      FROM delivery WHERE id = v_delivery_id
+     FOR UPDATE;
+
+    SET v_cur_rank = CASE v_status
+      WHEN 'PENDING' THEN 1 WHEN 'COURIER_ASSIGNED' THEN 2 WHEN 'PICKUP' THEN 3
+      WHEN 'PICKUP_COMPLETE' THEN 4 WHEN 'DROPOFF' THEN 5 WHEN 'DELIVERED' THEN 6
+      WHEN 'CANCELED' THEN 6 WHEN 'RETURNED' THEN 7 ELSE 0 END;
+    SET v_new_rank = CASE p_status
+      WHEN 'PENDING' THEN 1 WHEN 'COURIER_ASSIGNED' THEN 2 WHEN 'PICKUP' THEN 3
+      WHEN 'PICKUP_COMPLETE' THEN 4 WHEN 'DROPOFF' THEN 5 WHEN 'DELIVERED' THEN 6
+      WHEN 'CANCELED' THEN 6 WHEN 'RETURNED' THEN 7 ELSE -1 END;
+    -- An event with no timestamp is treated as fresh (nothing to compare).
+    SET v_fresh = (p_provider_updated_at IS NULL OR v_last_update IS NULL
+                   OR p_provider_updated_at >= v_last_update);
+
+    UPDATE delivery
+       SET provider_delivery_id = COALESCE(provider_delivery_id, p_provider_delivery_id),
+           status          = CASE WHEN v_new_rank > v_cur_rank THEN p_status ELSE status END,
+           last_error_code = CASE WHEN v_new_rank > v_cur_rank THEN NULL ELSE last_error_code END,
+           -- tracking_url is stored exactly as the provider sent it.
+           tracking_url    = CASE WHEN v_fresh THEN COALESCE(p_tracking_url, tracking_url) ELSE tracking_url END,
+           pickup_eta      = CASE WHEN v_fresh THEN COALESCE(p_pickup_eta, pickup_eta) ELSE pickup_eta END,
+           dropoff_eta     = CASE WHEN v_fresh THEN COALESCE(p_dropoff_eta, dropoff_eta) ELSE dropoff_eta END,
+           courier_name          = CASE WHEN NOT v_fresh THEN courier_name
+                                        WHEN p_courier_mode = 'SET' THEN p_courier_name
+                                        WHEN p_courier_mode = 'CLEAR' THEN NULL ELSE courier_name END,
+           courier_image_url     = CASE WHEN NOT v_fresh THEN courier_image_url
+                                        WHEN p_courier_mode = 'SET' THEN p_courier_image_url
+                                        WHEN p_courier_mode = 'CLEAR' THEN NULL ELSE courier_image_url END,
+           courier_vehicle       = CASE WHEN NOT v_fresh THEN courier_vehicle
+                                        WHEN p_courier_mode = 'SET' THEN p_courier_vehicle
+                                        WHEN p_courier_mode = 'CLEAR' THEN NULL ELSE courier_vehicle END,
+           courier_vehicle_type  = CASE WHEN NOT v_fresh THEN courier_vehicle_type
+                                        WHEN p_courier_mode = 'SET' THEN p_courier_vehicle_type
+                                        WHEN p_courier_mode = 'CLEAR' THEN NULL ELSE courier_vehicle_type END,
+           courier_license_plate = CASE WHEN NOT v_fresh THEN courier_license_plate
+                                        WHEN p_courier_mode = 'SET' THEN p_courier_license_plate
+                                        WHEN p_courier_mode = 'CLEAR' THEN NULL ELSE courier_license_plate END,
+           courier_rating        = CASE WHEN NOT v_fresh THEN courier_rating
+                                        WHEN p_courier_mode = 'SET' THEN p_courier_rating
+                                        WHEN p_courier_mode = 'CLEAR' THEN NULL ELSE courier_rating END,
+           courier_imminent      = CASE WHEN v_fresh AND p_courier_imminent IS NOT NULL
+                                        THEN p_courier_imminent ELSE courier_imminent END,
+           undeliverable_reason  = CASE WHEN v_fresh THEN COALESCE(NULLIF(p_undeliverable_reason, ''), undeliverable_reason)
+                                        ELSE undeliverable_reason END,
+           provider_updated_at   = CASE WHEN v_fresh THEN COALESCE(p_provider_updated_at, provider_updated_at)
+                                        ELSE provider_updated_at END
+     WHERE id = v_delivery_id;
+
+    -- Did anything user-visible change?
+    SELECT (d.status <> v_status)
+        OR NOT (d.courier_name <=> v_courier)
+        OR (d.courier_imminent <> v_imminent)
+        OR NOT (d.tracking_url <=> v_tracking)
+        OR (d.pickup_eta IS NULL) <> (v_pickup_eta IS NULL)
+        OR (d.dropoff_eta IS NULL) <> (v_dropoff_eta IS NULL)
+        OR ABS(TIMESTAMPDIFF(SECOND, d.pickup_eta, v_pickup_eta)) >= 60
+        OR ABS(TIMESTAMPDIFF(SECOND, d.dropoff_eta, v_dropoff_eta)) >= 60
+      INTO v_notify
+      FROM delivery d WHERE d.id = v_delivery_id;
+  END IF;
+
+  SELECT d.order_id, o.location_id, d.status, d.provider_delivery_id,
+         COALESCE(v_notify, 0) AS notify
+    FROM delivery d
+    JOIN `order` o ON o.id = d.order_id
+   WHERE d.id = v_delivery_id;
+END //
+
+-- Mark a delivery canceled on our side (order canceled by staff). Terminal
+-- courier states are left alone.
+DROP PROCEDURE IF EXISTS sp_delivery_cancel //
+CREATE PROCEDURE sp_delivery_cancel(IN p_order_id INT UNSIGNED)
+BEGIN
+  UPDATE delivery
+     SET status = 'CANCELED'
+   WHERE order_id = p_order_id AND status NOT IN ('DELIVERED', 'CANCELED', 'RETURNED');
+
+  SELECT * FROM delivery WHERE order_id = p_order_id;
+END //
+
+-- ---- Delivery settings (migration 010) --------------------------------------
+-- One global row: minimum order for delivery + the customer's share of the
+-- provider fee. The restaurant covers the remainder.
+
+DROP PROCEDURE IF EXISTS sp_delivery_settings_get //
+CREATE PROCEDURE sp_delivery_settings_get()
+BEGIN
+  -- Self-healing: a missing row (e.g. deleted by hand) falls back to defaults.
+  INSERT IGNORE INTO delivery_settings (id) VALUES (1);
+
+  SELECT s.min_order_amount, s.customer_fee_percent,
+         (100 - s.customer_fee_percent) AS restaurant_fee_percent,
+         s.updated_at, s.updated_by,
+         CONCAT_WS(' ', u.first_name, u.last_name) AS updated_by_name
+    FROM delivery_settings s
+    LEFT JOIN `user` u ON u.id = s.updated_by
+   WHERE s.id = 1;
+END //
+
+DROP PROCEDURE IF EXISTS sp_delivery_settings_update //
+CREATE PROCEDURE sp_delivery_settings_update(
+  IN p_min_order_amount     DECIMAL(10, 2),
+  IN p_customer_fee_percent DECIMAL(5, 2),
+  IN p_updated_by           INT UNSIGNED
+)
+BEGIN
+  IF p_min_order_amount IS NULL OR p_min_order_amount < 0 OR p_min_order_amount > 10000 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Minimum order must be between $0 and $10,000.';
+  END IF;
+  IF p_customer_fee_percent IS NULL OR p_customer_fee_percent < 0 OR p_customer_fee_percent > 100 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Customer share must be between 0% and 100%.';
+  END IF;
+
+  INSERT INTO delivery_settings (id, min_order_amount, customer_fee_percent, updated_by)
+  VALUES (1, p_min_order_amount, p_customer_fee_percent, p_updated_by)
+  ON DUPLICATE KEY UPDATE
+    min_order_amount     = VALUES(min_order_amount),
+    customer_fee_percent = VALUES(customer_fee_percent),
+    updated_by           = VALUES(updated_by);
+
+  CALL sp_delivery_settings_get();
 END //
 
 DELIMITER ;

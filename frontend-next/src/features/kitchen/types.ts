@@ -39,6 +39,21 @@ export interface KitchenOrder {
   user_last_name?: string | null;
   user_email?: string | null;
   user_phone?: string | null;
+
+  /**
+   * Delivery (null/undefined fields for pickup orders). The courier status is
+   * shown for context only — it is controlled by the provider and never moves
+   * the kitchen status.
+   */
+  fulfillment_type?: 'PICKUP' | 'DELIVERY';
+  delivery_status?: string | null;
+  /** When the courier is booked to collect — the kitchen's "prep by". */
+  delivery_pickup_ready_at?: string | null;
+  delivery_pickup_eta?: string | null;
+  delivery_dropoff_eta?: string | null;
+  delivery_error_code?: string | null;
+  delivery_courier_name?: string | null;
+  delivery_courier_imminent?: number | boolean | null;
 }
 
 export interface KitchenColumn {
@@ -70,6 +85,7 @@ export interface LaterTodayOrder {
   notes?: string | null;
   prepare_at: string;
   item_count: number;
+  fulfillment_type?: 'PICKUP' | 'DELIVERY';
 }
 
 /** Response shape of GET /kitchen/board. */

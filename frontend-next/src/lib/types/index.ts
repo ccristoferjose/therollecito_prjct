@@ -99,6 +99,30 @@ export interface Order {
   subtotal?: number;
   discount_amount?: number;
   processing_fee?: number;
+  /** PICKUP unless the customer chose delivery. */
+  fulfillment_type?: 'PICKUP' | 'DELIVERY';
+  /** Customer-facing delivery fee — its own line, never folded into subtotal. */
+  delivery_fee?: number;
+  /** Courier lifecycle (tracking endpoint only; null for pickup orders). */
+  delivery_status?: string | null;
+  delivery_tracking_url?: string | null;
+  delivery_pickup_eta?: string | null;
+  delivery_dropoff_eta?: string | null;
+  delivery_street_address?: string | null;
+  delivery_apartment?: string | null;
+  delivery_city?: string | null;
+  delivery_state?: string | null;
+  delivery_zip_code?: string | null;
+  delivery_undeliverable_reason?: string | null;
+  /** Courier snapshot from provider webhooks (no phone / live location stored). */
+  courier_name?: string | null;
+  courier_image_url?: string | null;
+  courier_vehicle?: string | null;
+  courier_vehicle_type?: string | null;
+  courier_license_plate?: string | null;
+  courier_rating?: number | null;
+  /** Provider says the courier is about to arrive (at the bakery or the door). */
+  courier_imminent?: number | boolean | null;
   tracking_code?: string;
   display_number?: number;
   guest_name?: string | null;
