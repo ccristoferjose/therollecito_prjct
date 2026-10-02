@@ -8,6 +8,13 @@ const menuController = require('./menu.controller');
 const router = Router();
 
 // Public: get full menu for a location (filtered by item_location)
+// Public: landing-page showcase across all active locations.
+router.get(
+  '/featured',
+  [query('limit').optional().isInt({ min: 1, max: 24 }), validateRequest],
+  menuController.getFeatured
+);
+
 router.get(
   '/location/:locationId',
   [param('locationId').isInt({ gt: 0 }), validateRequest],

@@ -95,6 +95,8 @@ export default function SiteFooter() {
               <li><Link href="/order" className="transition-colors hover:text-accent">{t.nav.menu}</Link></li>
               <li><Link href="/locations" className="transition-colors hover:text-accent">{t.nav.locations}</Link></li>
               <li><Link href="/track" className="transition-colors hover:text-accent">{t.tracking.trackOrder}</Link></li>
+              <li><Link href="/accessibility" className="transition-colors hover:text-accent">{t.footer.accessibility}</Link></li>
+              <li><Link href="/terms" className="transition-colors hover:text-accent">{t.footer.terms}</Link></li>
             </ul>
           </nav>
 
@@ -137,24 +139,16 @@ export default function SiteFooter() {
           {/* Year is rendered client-side; this component is already a Client
               Component, so there is no SSR/CSR mismatch to guard against. */}
           <p>&copy; {new Date().getFullYear()} The Rollecito. {t.footer.rights}</p>
-          {/* Legal links. Terms of Service is not linked yet: no terms page
-              exists, and a link to a 404 is worse than no link. */}
-          <nav aria-label={t.footer.legal}>
-            <ul className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1">
-              {showPrivacyLink && (
-                <li>
-                  <Link href="/privacy" className="transition-colors hover:text-accent">
-                    {t.footer.privacy}
-                  </Link>
-                </li>
-              )}
-              <li>
-                <Link href="/accessibility" className="transition-colors hover:text-accent">
-                  {t.footer.accessibility}
-                </Link>
-              </li>
-            </ul>
-          </nav>
+          {/* Accessibility and Terms of Use live in Quick Links. The Privacy
+              Policy joins here only once it is approved and published — a link
+              to a 404 is worse than no link. */}
+          {showPrivacyLink && (
+            <nav aria-label={t.footer.legal}>
+              <Link href="/privacy" className="transition-colors hover:text-accent">
+                {t.footer.privacy}
+              </Link>
+            </nav>
+          )}
           <p>Baked with love in Los Angeles.</p>
           <p className="text-xs">
             Powered by {DEVELOPER_NAME}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Clock, CalendarDays, AlertTriangle } from 'lucide-react';
 import Modal from '@/components/ui/modal';
 import Button from '@/components/ui/button';
@@ -64,6 +64,10 @@ interface PickupPickerProps {
   menuName?: string | null;
   /** Rendered when the customer has not chosen a time yet. */
   requireSelection?: boolean;
+  /** Dialog title. Delivery uses "When should it be ready?". */
+  title?: string;
+  /** Prefix in the summary line ("Pickup: Tomorrow at 9:00 AM"). */
+  label?: string;
 }
 
 /**
@@ -75,6 +79,8 @@ export default function PickupPicker({
   locationId,
   menuName,
   requireSelection = false,
+  title = 'When would you like to pick up?',
+  label = 'Pickup',
 }: PickupPickerProps) {
   const { pickupTime, setPickupTime, validating } = usePickup();
   const [open, setOpen] = useState(false);
@@ -84,24 +90,58 @@ export default function PickupPicker({
   const [loading, setLoading] = useState(false);
   const [warning, setWarning] = useState<string[] | null>(null);
   const announce = useAnnounce();
+  // While true, an empty day moves the picker to the next day that has times.
+  // Only for the first look after opening without a chosen time — once the
+  // customer taps a day, their choice is respected even if it is empty.
+  const autoAdvance = useRef(false);
 
   const days = Array.from({ length: DAYS_AHEAD }, (_, i) => {
     const d = new Date(today);
     d.setDate(today.getDate() + i);
     return d;
   });
+  const dayValues = days.map(toLocalDate);
+
+  /**
+   * Open on the day already chosen (e.g. at the start of the order), so
+   * "Change" shows the current selection instead of always jumping to Today.
+   */
+  function openPicker() {
+    const chosenDay = pickupTime ? pickupTime.slice(0, 10) : null;
+    const startDay = chosenDay && dayValues.includes(chosenDay) ? chosenDay : dayValues[0];
+    autoAdvance.current = startDay !== chosenDay;
+    setSelectedDate(startDay);
+    setOpen(true);
+  }
+
+  function pickDay(value: string) {
+    autoAdvance.current = false;
+    setSelectedDate(value);
+  }
 
   const load = useCallback(
     async (date: string) => {
       setLoading(true);
       try {
-        setPeriods(await listBookablePeriods(locationId, date));
+        const result = await listBookablePeriods(locationId, date);
+        // e.g. opened late in the evening with nothing left today: show the
+        // next day that does have times rather than an empty dialog.
+        const hasSlots = result.some((p) => buildSlots(p).length > 0);
+        const next = dayValues[dayValues.indexOf(date) + 1];
+        if (!hasSlots && autoAdvance.current && next) {
+          setSelectedDate(next);
+          return;
+        }
+        autoAdvance.current = false;
+        setPeriods(result);
       } catch {
         setPeriods([]);
       } finally {
         setLoading(false);
       }
     },
+    // dayValues is derived from `today`, which never changes after mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [locationId],
   );
 
@@ -130,7 +170,7 @@ export default function PickupPicker({
           <Clock className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden="true" />
           {pickupTime ? (
             <span>
-              <span className="text-text-secondary">Pickup: </span>
+              <span className="text-text-secondary">{label}: </span>
               <span className="font-semibold">
                 {formatDayLabel(fromLocalDateTime(pickupTime), today)} at{' '}
                 {formatSlotLabel(pickupTime)}
@@ -141,7 +181,7 @@ export default function PickupPicker({
             <span className={requireSelection ? 'font-semibold' : 'text-text-secondary'}>
               {requireSelection
                 ? 'Choose a pickup time to see the menu'
-                : 'Pickup: as soon as possible'}
+                : `${label}: as soon as possible`}
             </span>
           )}
         </div>
@@ -149,7 +189,7 @@ export default function PickupPicker({
           type="button"
           size="sm"
           variant="outline"
-          onClick={() => setOpen(true)}
+          onClick={openPicker}
           disabled={validating}
           aria-haspopup="dialog"
           aria-label={pickupTime ? 'Change pickup time' : 'Choose a time for pickup'}
@@ -176,7 +216,7 @@ export default function PickupPicker({
         </div>
       ) : null}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="When would you like to pick up?">
+      <Modal open={open} onClose={() => setOpen(false)} title={title}>
         <div className="space-y-4">
           <div>
             <h3 id="pickup-day-label" className="mb-2 flex items-center gap-2 text-sm font-medium">
@@ -191,7 +231,7 @@ export default function PickupPicker({
                   <button
                     key={value}
                     type="button"
-                    onClick={() => setSelectedDate(value)}
+                    onClick={() => pickDay(value)}
                     aria-pressed={active}
                     className={`rounded-md border px-3 py-1.5 text-sm ${
                       active ? 'border-primary bg-primary text-white' : 'border-border'

@@ -10,6 +10,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: `${env.siteUrl}/locations`, changeFrequency: 'weekly', priority: 0.8 },
     { url: `${env.siteUrl}/order`, changeFrequency: 'daily', priority: 0.9 },
     { url: `${env.siteUrl}/accessibility`, changeFrequency: 'yearly', priority: 0.2 },
+    { url: `${env.siteUrl}/terms`, changeFrequency: 'yearly', priority: 0.2 },
     // /privacy is added once legal.privacyPolicyPublished is true.
     ...(legal.privacyPolicyPublished
       ? [{ url: `${env.siteUrl}/privacy`, changeFrequency: 'yearly' as const, priority: 0.2 }]

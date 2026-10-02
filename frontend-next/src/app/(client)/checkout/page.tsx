@@ -790,7 +790,11 @@ export default function CheckoutPage() {
               )}
 
               {pickupTime && locationId ? (
-                <PickupPicker locationId={locationId} />
+                <PickupPicker
+                  locationId={locationId}
+                  title={isDelivery ? 'When should it be ready?' : undefined}
+                  label={isDelivery ? 'Ready' : undefined}
+                />
               ) : schedule.mode === 'closed' ? (
                 <div className="flex items-start gap-3 rounded-lg border border-error/30 bg-red-50 p-4">
                   <AlertTriangle size={18} className="mt-0.5 shrink-0 text-error" aria-hidden="true" />
@@ -1131,7 +1135,10 @@ export default function CheckoutPage() {
             className="w-full"
             disabled={
               loading ||
-              schedule.mode === 'closed' ||
+              // "closed" comes from the legacy same-day hours. It only applies when
+              // no service-period time was chosen — a scheduled time (e.g.
+              // tomorrow morning) is valid even after today's closing time.
+              (!pickupTime && schedule.mode === 'closed') ||
               delivery.repricing ||
               (isDelivery && (delivery.belowMinimum || !delivery.accepted || !!delivery.priceChange))
             }
@@ -1147,6 +1154,15 @@ export default function CheckoutPage() {
               </>
             )}
           </Button>
+
+          <p className="text-center text-xs text-text-secondary">
+            By placing your order you agree to our{' '}
+            <Link href="/terms" target="_blank" className="underline hover:text-text">
+              Terms of Use
+              <span className="sr-only"> (opens in a new tab)</span>
+            </Link>
+            .
+          </p>
         </form>
       )}
 

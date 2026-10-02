@@ -74,6 +74,7 @@ const en = {
     legal: 'Legal',
     privacy: 'Privacy Policy',
     accessibility: 'Accessibility',
+    terms: 'Terms of Use',
   },
 
   // Locations page
