@@ -1238,6 +1238,33 @@ BEGIN
    WHERE i.is_active = 1;
 END //
 
+-- Landing-page showcase: active items sold at ANY active location, so the
+-- home page does not depend on one particular location (or on a pickup time).
+-- Membership goes through menu_category (migration 006) like the ordering
+-- menus. Items with a photo come first.
+DROP PROCEDURE IF EXISTS sp_menu_get_featured //
+CREATE PROCEDURE sp_menu_get_featured(IN p_limit TINYINT UNSIGNED)
+BEGIN
+  DECLARE v_limit TINYINT UNSIGNED DEFAULT 4;
+  IF p_limit IS NOT NULL AND p_limit BETWEEN 1 AND 24 THEN SET v_limit = p_limit; END IF;
+
+  SELECT i.id, i.category_id, i.name, i.description, i.price, i.image_url, i.sort_order
+    FROM item i
+   WHERE i.is_active = 1
+     AND EXISTS (
+           SELECT 1 FROM item_location il
+             JOIN location l ON l.id = il.location_id
+            WHERE il.item_id = i.id AND l.is_active = 1
+         )
+     AND EXISTS (
+           SELECT 1 FROM menu_category mc
+             JOIN menu m ON m.id = mc.menu_id
+            WHERE mc.category_id = i.category_id AND m.is_active = 1
+         )
+   ORDER BY (i.image_url IS NOT NULL AND i.image_url <> '') DESC, i.sort_order, i.id
+   LIMIT v_limit;
+END //
+
 -- Get the FULL menu (all items regardless of location — for admin management)
 DROP PROCEDURE IF EXISTS sp_menu_get_all //
 CREATE PROCEDURE sp_menu_get_all()

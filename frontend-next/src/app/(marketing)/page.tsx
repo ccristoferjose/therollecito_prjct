@@ -4,7 +4,7 @@ import Image from 'next/image';
 import { ArrowRight, Clock, MapPin, ShieldCheck, Sparkles, Heart, Leaf, Star, Sunrise, Sandwich, CalendarClock } from 'lucide-react';
 import en from '@/lib/i18n/en';
 import { getLocations } from '@/features/locations/queries';
-import { getMenuForLocation } from '@/features/menu/queries';
+import { getFeaturedItems } from '@/features/menu/queries';
 import { formatCurrency } from '@/lib/utils/format';
 import { brandJsonLd } from '@/lib/seo/schema';
 import { env } from '@/lib/config/env';
@@ -30,14 +30,14 @@ export const metadata: Metadata = {
 
 const t = en;
 
+/**
+ * Showcase items for the home page. Drawn from every active location rather
+ * than locations[0]'s menu: the menu a visitor sees depends on the location and
+ * pickup time they choose, and the first location alone could have nothing to
+ * show, which left the section as permanent empty placeholders.
+ */
 async function getFeatured(): Promise<MenuItem[]> {
-  const locations = await getLocations();
-  const firstLocationId = locations[0]?.id;
-  if (!firstLocationId) return [];
-  const menu = await getMenuForLocation(firstLocationId);
-  const items = menu?.items ?? [];
-  const withImages = items.filter((i) => i.image_url && i.is_active !== 0);
-  return (withImages.length >= 4 ? withImages : items).slice(0, 4);
+  return getFeaturedItems(4);
 }
 
 export default async function LandingPage() {
@@ -202,66 +202,66 @@ export default async function LandingPage() {
         </section>
       )}
 
-      {/* FEATURED */}
-      <section className="bg-[#FFF1DC]">
-        <div className="mx-auto max-w-6xl px-4 py-20">
-          <div className="mb-12 text-center">
-            <h2 className="text-3xl font-extrabold text-primary-dark sm:text-4xl">{t.favorites.title}</h2>
-            <p className="mx-auto mt-3 max-w-xl text-primary-dark/70">{t.favorites.subtitle}</p>
-          </div>
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {featured.length > 0
-              ? featured.map((item) => (
-                  <article
-                    key={item.id}
-                    className="group flex flex-col rounded-3xl bg-[#F2D6B3] p-5 shadow-[var(--shadow-card)] transition-all duration-300 hover:-translate-y-1 hover:shadow-[var(--shadow-elevated)]"
-                  >
-                    <div className="relative flex h-40 items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-[#F4A261]/60 to-[#D98C5F]/50">
-                      {/* alt="": the product name is the heading just below. */}
-                      {item.image_url ? (
-                        <Image
-                          src={item.image_url}
-                          alt=""
-                          fill
-                          sizes="(max-width: 768px) 100vw, 25vw"
-                          className="object-cover transition-transform duration-500 group-hover:scale-105"
-                        />
-                      ) : (
-                        <span className="text-6xl" aria-hidden="true">🥐</span>
+      {/* FEATURED — omitted entirely when nothing is published, rather than
+          rendering placeholder cards that never fill in (this is a server
+          render, so an empty list is final, not "still loading"). */}
+      {featured.length > 0 && (
+        <section className="bg-[#FFF1DC]">
+          <div className="mx-auto max-w-6xl px-4 py-20">
+            <div className="mb-12 text-center">
+              <h2 className="text-3xl font-extrabold text-primary-dark sm:text-4xl">{t.favorites.title}</h2>
+              <p className="mx-auto mt-3 max-w-xl text-primary-dark/70">{t.favorites.subtitle}</p>
+            </div>
+            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+              {featured.map((item) => (
+                    <article
+                      key={item.id}
+                      className="group flex flex-col rounded-3xl bg-[#F2D6B3] p-5 shadow-[var(--shadow-card)] transition-all duration-300 hover:-translate-y-1 hover:shadow-[var(--shadow-elevated)]"
+                    >
+                      <div className="relative flex h-40 items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-[#F4A261]/60 to-[#D98C5F]/50">
+                        {/* alt="": the product name is the heading just below. */}
+                        {item.image_url ? (
+                          <Image
+                            src={item.image_url}
+                            alt=""
+                            fill
+                            sizes="(max-width: 768px) 100vw, 25vw"
+                            className="object-cover transition-transform duration-500 group-hover:scale-105"
+                          />
+                        ) : (
+                          <span className="text-6xl" aria-hidden="true">🥐</span>
+                        )}
+                      </div>
+                      <h3 className="mt-4 line-clamp-1 text-lg font-bold text-primary-dark">{item.name}</h3>
+                      {item.description && (
+                        <p className="mt-1 line-clamp-2 flex-1 text-sm text-primary-dark/70">
+                          {item.description}
+                        </p>
                       )}
-                    </div>
-                    <h3 className="mt-4 line-clamp-1 text-lg font-bold text-primary-dark">{item.name}</h3>
-                    {item.description && (
-                      <p className="mt-1 line-clamp-2 flex-1 text-sm text-primary-dark/70">
-                        {item.description}
-                      </p>
-                    )}
-                    <div className="mt-4 flex items-center justify-between">
-                      <span className="text-xl font-extrabold text-primary">{formatCurrency(item.price)}</span>
-                      <Link
-                        href="/order"
-                        className="rounded-full bg-primary-dark px-4 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-hover"
-                      >
-                        Order<span className="sr-only"> {item.name}</span>
-                      </Link>
-                    </div>
-                  </article>
-                ))
-              : Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} aria-hidden="true" className="h-72 animate-pulse rounded-3xl bg-[#F2D6B3]/60" />
-                ))}
+                      <div className="mt-4 flex items-center justify-between">
+                        <span className="text-xl font-extrabold text-primary">{formatCurrency(item.price)}</span>
+                        <Link
+                          href="/order"
+                          className="rounded-full bg-primary-dark px-4 py-2 text-xs font-semibold text-text-inverse transition-colors hover:bg-accent-hover"
+                        >
+                          Order<span className="sr-only"> {item.name}</span>
+                        </Link>
+                      </div>
+                    </article>
+                  ))}
+            </div>
+            <div className="mt-10 text-center">
+              <Link
+                href="/order"
+                className="inline-flex items-center gap-2 rounded-full bg-accent px-7 py-3.5 text-base font-semibold text-primary-dark shadow-[var(--shadow-warm)] transition-colors hover:bg-accent-hover hover:text-text-inverse"
+              >
+                {t.favorites.viewFullMenu}
+                <ArrowRight size={18} />
+              </Link>
+            </div>
           </div>
-          <div className="mt-10 text-center">
-            <Link
-              href="/order"
-              className="inline-flex items-center gap-2 rounded-full bg-accent px-7 py-3.5 text-base font-semibold text-primary-dark shadow-[var(--shadow-warm)] transition-colors hover:bg-accent-hover hover:text-text-inverse"
-            >
-              {t.favorites.viewFullMenu}
-              <ArrowRight size={18} />
-            </Link>
-          </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* ABOUT + features */}
       {/* overflow-x-clip: the rotated card behind the mascot reaches ~9px past

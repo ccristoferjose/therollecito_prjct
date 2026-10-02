@@ -33,6 +33,12 @@ async function getFullMenuForPickup(locationId, pickupTime) {
   };
 }
 
+/** Landing-page showcase across all active locations (see sp_menu_get_featured). */
+async function getFeatured(limit = 4) {
+  const resultSets = await db.callMulti('sp_menu_get_featured', [limit]);
+  return { items: resultSets[0] || [] };
+}
+
 async function getAllMenu() {
   const resultSets = await db.callMulti('sp_menu_get_all', []);
   return {
@@ -182,6 +188,7 @@ async function detachCategoryFromMenu(menuId, categoryId) {
 }
 
 module.exports = {
+  getFeatured,
   getFullMenu,
   getFullMenuForPickup,
   listMenuCategories,
