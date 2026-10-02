@@ -42,6 +42,38 @@ const env = {
     origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
   },
 
+  // Delivery fulfillment. Provider-neutral settings; provider credentials live
+  // in their own block below and are NEVER sent to the browser.
+  delivery: {
+    // Kill switch. Delivery is also unavailable whenever the provider is not
+    // configured, so an environment without credentials simply offers pickup.
+    enabled: process.env.DELIVERY_ENABLED !== 'false',
+    provider: process.env.DELIVERY_PROVIDER || 'uber_direct',
+    // ASAP orders: courier pickup is requested for now + prep time. The service
+    // period's prep_time_minutes wins when it is set (> 0); this is the fallback.
+    defaultPrepMinutes: parseInt(process.env.DELIVERY_DEFAULT_PREP_MINUTES, 10) || 20,
+    // Treat a quote as expired this many seconds early, so a quote cannot lapse
+    // between our check and the customer's payment completing.
+    quoteExpiryBufferSeconds: parseInt(process.env.DELIVERY_QUOTE_EXPIRY_BUFFER_SECONDS, 10) || 60,
+    // Optional straight-line radius from the location. Unset = the provider decides.
+    maxRadiusMiles: parseFloat(process.env.DELIVERY_MAX_RADIUS_MILES) || null,
+    // 'census' (US Census geocoder — free, no key) or 'none'.
+    geocoder: process.env.DELIVERY_GEOCODER || 'census',
+    // Used when a location has no phone of its own; couriers must be able to call the store.
+    pickupPhoneFallback: process.env.DELIVERY_PICKUP_PHONE || null,
+    externalStoreIdPrefix: process.env.DELIVERY_EXTERNAL_STORE_PREFIX || 'rollecito',
+  },
+
+  uber: {
+    clientId: process.env.UBER_CLIENT_ID,
+    clientSecret: process.env.UBER_CLIENT_SECRET,
+    customerId: process.env.UBER_CUSTOMER_ID,
+    webhookSigningKey: process.env.UBER_WEBHOOK_SIGNING_KEY,
+    authUrl: process.env.UBER_AUTH_URL || 'https://auth.uber.com/oauth/v2/token',
+    apiBaseUrl: process.env.UBER_API_BASE_URL || 'https://api.uber.com',
+    scope: process.env.UBER_SCOPE || 'eats.deliveries',
+  },
+
   s3: {
     region: process.env.AWS_REGION || 'us-east-1',
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,

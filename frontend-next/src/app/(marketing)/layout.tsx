@@ -1,47 +1,40 @@
-import Link from 'next/link';
 import { LangProvider } from '@/providers/lang-provider';
+import { ClientAuthProvider } from '@/providers/client-auth-provider';
+import { CartProvider } from '@/providers/cart-provider';
+import SiteHeader from '@/components/layout/site-header';
 import SiteFooter from '@/components/layout/site-footer';
 import SkipLink from '@/components/layout/skip-link';
 
 /**
- * PUBLIC marketing layout — Server Component. SEO-focused chrome (header/footer)
- * shared by the indexable marketing pages. Exposes only client-facing actions
+ * PUBLIC marketing layout — Server Component. Chrome for the indexable
+ * marketing pages (home, locations, legal). Exposes only client-facing actions
  * (browse + order); no staff/admin entry points here.
  *
- * The footer is the SAME component the ordering pages use. It previously had a
- * one-line placeholder here, so home and /locations showed nothing like the
- * real footer. SiteFooter is a Client Component (its copy is translated), hence
- * the LangProvider — scoped to the footer alone so the page content above it
- * stays fully server-rendered for SEO.
+ * The header and footer are the SAME components the ordering pages use, so the
+ * navbar (Home, Menu, language, Track Order, Locations, Profile, Cart) is
+ * identical everywhere. Both are Client Components (translated copy, cart
+ * count, signed-in name), hence the providers. Wrapping `children` in client
+ * providers does not make the page a client page: Server Component children
+ * are still rendered on the server, so the content stays fully SEO-rendered.
+ *
+ * syncDocumentLang off: only the header and footer are translated on these
+ * pages, so a saved Spanish preference must not relabel the English page.
  */
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen flex-col">
-      <SkipLink />
-      <header className="sticky top-0 z-40 border-b border-border bg-surface/90 backdrop-blur">
-        <nav aria-label="Main" className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-          <Link href="/" className="text-lg font-extrabold text-primary">
-            The Rollecito
-          </Link>
-          <div className="flex items-center gap-4 text-sm font-medium text-text">
-            <Link href="/locations" className="hover:text-primary">Locations</Link>
-            <Link
-              href="/order"
-              className="rounded-full bg-accent px-4 py-2 font-semibold text-primary-dark shadow-warm transition-colors hover:bg-accent-hover hover:text-text-inverse"
-            >
-              Order online
-            </Link>
+    <LangProvider syncDocumentLang={false}>
+      <ClientAuthProvider>
+        <CartProvider>
+          <div className="flex min-h-screen flex-col">
+            <SkipLink />
+            <SiteHeader />
+
+            <main id="main-content" tabIndex={-1} className="flex-1">{children}</main>
+
+            <SiteFooter />
           </div>
-        </nav>
-      </header>
-
-      <main id="main-content" tabIndex={-1} className="flex-1">{children}</main>
-
-      {/* syncDocumentLang off: only the footer is translated on these pages,
-          so a saved Spanish preference must not relabel the English page. */}
-      <LangProvider syncDocumentLang={false}>
-        <SiteFooter />
-      </LangProvider>
-    </div>
+        </CartProvider>
+      </ClientAuthProvider>
+    </LangProvider>
   );
 }

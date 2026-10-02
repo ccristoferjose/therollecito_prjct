@@ -31,7 +31,7 @@ restaurant-ordering-platform/
 ## Features
 
 - Multi-location restaurant support (3+ branches)
-- Online ordering (pickup only — delivery planned)
+- Online ordering — pickup, or courier delivery via Uber Direct (`backend/src/modules/delivery/`, migration `008_delivery.sql`; offered only when `UBER_*` credentials are configured)
 - Real-time kitchen order management (FIFO)
 - Role-based access: admin, manager, client
 - Guest checkout and authenticated users (Firebase UID)

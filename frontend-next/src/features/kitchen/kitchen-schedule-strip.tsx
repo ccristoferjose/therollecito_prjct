@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Hourglass, ChevronRight, CalendarClock, Clock3, MessageSquare, Package } from 'lucide-react';
 import { formatCurrency, formatOrderNumber, formatTime } from '@/lib/utils/format';
 import type { KitchenOrder, LaterTodayOrder } from '@/features/kitchen/types';
+import { DeliveryTag } from '@/features/kitchen/delivery-badges';
 
 /**
  * Everything the kitchen is NOT working on yet, kept out of the active columns.
@@ -61,6 +62,7 @@ export default function KitchenScheduleStrip({
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-lg font-extrabold text-primary-dark">{formatOrderNumber(order)}</span>
+                  {order.fulfillment_type === 'DELIVERY' && <DeliveryTag compact />}
                   <span className="inline-flex items-center gap-1 rounded-full bg-white/80 px-2 py-0.5 text-xs font-bold text-[#A86A4A]">
                     <Clock3 size={12} />
                     prep {order.prepare_at ? formatTime(order.prepare_at) : '—'}
@@ -115,6 +117,7 @@ export default function KitchenScheduleStrip({
               className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/40 py-2 text-sm last:border-b-0"
             >
               <span className="font-extrabold text-primary-dark">{formatOrderNumber(order)}</span>
+              {order.fulfillment_type === 'DELIVERY' && <DeliveryTag compact />}
               <span className="inline-flex items-center gap-1 font-semibold text-[#A86A4A]">
                 <Clock3 size={13} />
                 prep {formatTime(order.prepare_at)}

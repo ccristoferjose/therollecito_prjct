@@ -26,6 +26,7 @@ function errorHandler(err, _req, res, _next) {
   if (err.isOperational) {
     return res.status(err.statusCode).json({
       error: err.message,
+      ...(err.code ? { code: err.code } : {}),
     });
   }
 

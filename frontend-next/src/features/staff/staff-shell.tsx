@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard, UtensilsCrossed, MapPin, Users, Tag, LogOut, ChefHat, ClipboardList,
-  Contact, Clock, CalendarClock, Megaphone,
+  Contact, Clock, CalendarClock, Megaphone, Bike,
 } from 'lucide-react';
 import { useStaffAuth } from '@/providers/staff-auth-provider';
 import { useFetch } from '@/lib/hooks/use-fetch';
@@ -27,6 +27,8 @@ const adminNav: NavItem[] = [
   { to: '/staff/admin/locations', icon: MapPin, label: 'Locations' },
   // Which menu is served when, per location.
   { to: '/staff/admin/service-periods', icon: Clock, label: 'Service periods' },
+  // Delivery pricing: minimum order and customer/restaurant fee split.
+  { to: '/staff/admin/delivery', icon: Bike, label: 'Delivery' },
   { to: '/staff/admin/users', icon: Users, label: 'Users' },
   // Staff accounts live under Users; Clients is the customer directory.
   { to: '/staff/admin/clients', icon: Contact, label: 'Clients' },

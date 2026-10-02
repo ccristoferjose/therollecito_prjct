@@ -3,6 +3,7 @@ const db = require('../../config/db');
 const env = require('../../config/env');
 const AppError = require('../../utils/AppError');
 const { getIO } = require('../../sockets');
+const deliveryService = require('../delivery/delivery.service');
 
 /**
  * Create a Stripe PaymentIntent for an order.
@@ -22,6 +23,11 @@ async function createIntent(orderId) {
   }
   if (order.total_amount <= 0) {
     throw new AppError('Order total must be greater than zero. Calculate total first.', 400);
+  }
+  // Never charge against an expired delivery quote. The client handles the
+  // DELIVERY_QUOTE_EXPIRED code by refreshing the quote and retrying.
+  if (order.fulfillment_type === 'DELIVERY') {
+    await deliveryService.assertOrderQuoteValid(orderId);
   }
 
   const paymentIntent = await stripe.paymentIntents.create({
@@ -83,6 +89,9 @@ async function handleWebhook(rawBody, signature) {
           timestamp: Date.now(),
         });
       }
+      // Payment succeeded -> request the courier. Idempotent with the
+      // /payments/confirm path below: only one of them actually dispatches.
+      if (order.fulfillment_type === 'DELIVERY') deliveryService.dispatchInBackground(orderId);
     }
   }
 
@@ -130,6 +139,9 @@ async function confirmPayment(orderId, paymentIntentId) {
         status: 'PAID',
         timestamp: Date.now(),
       });
+    }
+    if (order.fulfillment_type === 'DELIVERY') {
+      deliveryService.dispatchInBackground(parseInt(orderId, 10));
     }
   }
 
