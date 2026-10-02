@@ -20,6 +20,12 @@ const getFullMenuForPickup = asyncHandler(async (req, res) => {
   res.json(data);
 });
 
+// Public: a few items for the landing page, independent of location.
+const getFeatured = asyncHandler(async (req, res) => {
+  const limit = req.query.limit ? Number.parseInt(req.query.limit, 10) : 4;
+  res.json(await menuService.getFeatured(limit));
+});
+
 const getAllMenu = asyncHandler(async (_req, res) => {
   const data = await menuService.getAllMenu();
   res.json(data);
@@ -122,6 +128,7 @@ const detachCategoryFromMenu = asyncHandler(async (req, res) => {
 module.exports = {
   getFullMenu,
   getFullMenuForPickup,
+  getFeatured,
   listMenuCategories,
   attachCategoryToMenu,
   detachCategoryFromMenu,

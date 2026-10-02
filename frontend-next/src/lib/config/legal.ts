@@ -13,6 +13,9 @@ export const legal = {
   /** Date the accessibility statement was last reviewed (ISO, local). */
   accessibilityReviewedOn: '2026-09-23',
 
+  /** Date the Terms of Use were last updated (ISO, local). */
+  termsUpdatedOn: '2026-10-01',
+
   /**
    * The privacy policy is a DRAFT pending business and legal sign-off (see
    * docs/compliance/privacy-audit.md, section F). While false, /privacy returns
