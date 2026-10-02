@@ -11,12 +11,13 @@ import { useStaffAuth } from '@/providers/staff-auth-provider';
 import { useFetch } from '@/lib/hooks/use-fetch';
 import { useSocket } from '@/lib/hooks/use-socket';
 import { api, ApiError } from '@/lib/api/client';
-import { formatCurrency, formatOrderNumber, formatWhen } from '@/lib/utils/format';
+import { formatCurrency, formatOrderNumber, formatTime, formatWhen } from '@/lib/utils/format';
 import Button from '@/components/ui/button';
 import Spinner from '@/components/ui/spinner';
 import type { Location } from '@/lib/types';
 import type { KitchenOrder, KitchenColumn, KitchenBoardResponse } from '@/features/kitchen/types';
 import KitchenScheduleStrip from '@/features/kitchen/kitchen-schedule-strip';
+import { CourierStatusBadge, DeliveryTag } from '@/features/kitchen/delivery-badges';
 
 const COLUMNS: KitchenColumn[] = [
   { status: 'PAID', label: 'New Orders', icon: Clock, nextStatus: 'PREPARING', nextAction: 'Start', nextIcon: ChefHat, headerBg: 'bg-[#F2D6B3]', headerText: 'text-primary-dark', accent: 'border-t-4 border-t-[#A86A4A]', dot: 'bg-[#A86A4A]' },
@@ -76,6 +77,7 @@ function KanbanCard({
   onAdvance,
   onPrioritize,
   onCancel,
+  onRetryCourier,
 }: {
   order: KitchenOrder;
   column: KitchenColumn;
@@ -85,8 +87,11 @@ function KanbanCard({
   onAdvance: (id: number, nextStatus: string) => Promise<void>;
   onPrioritize: (order: KitchenOrder) => void;
   onCancel: (order: KitchenOrder) => void;
+  onRetryCourier: (order: KitchenOrder) => Promise<void>;
 }) {
   const [advancing, setAdvancing] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const isDelivery = order.fulfillment_type === 'DELIVERY';
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -138,6 +143,7 @@ function KanbanCard({
       <div className={`flex items-start justify-between px-4 ${expanded ? 'pt-4 pb-2' : 'py-2.5'}`}>
         <div className="flex flex-wrap items-center gap-2">
           <span className={`font-extrabold text-primary-dark ${expanded ? 'text-2xl' : 'text-xl'}`}>{formatOrderNumber(order)}</span>
+          {isDelivery && <DeliveryTag compact={!expanded} />}
           <WaitTimer createdAt={order.created_at} />
           {!expanded && (
             <span className="text-xs font-semibold text-text-secondary">
@@ -222,6 +228,65 @@ function KanbanCard({
             </div>
           )}
 
+          {/* Delivery timing. Prep/Complete stay the kitchen's call; the
+              courier status is shown for context and never advances the card. */}
+          {isDelivery && (
+            <div className="mx-4 mb-2 rounded-xl border border-[#2F5D7C]/30 bg-[#2F5D7C]/5 px-3 py-2">
+              <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                <CourierStatusBadge status={order.delivery_status} />
+                {order.delivery_courier_name && (
+                  <span className="text-xs font-semibold text-primary-dark">{order.delivery_courier_name}</span>
+                )}
+                {/* The courier is about to walk in — the bag should be ready. */}
+                {!!Number(order.delivery_courier_imminent) &&
+                  (order.delivery_status === 'PICKUP' || order.delivery_status === 'COURIER_ASSIGNED') && (
+                    <span className="animate-pulse rounded-full bg-green-100 px-2 py-0.5 text-xs font-bold text-green-800">
+                      Courier arriving now
+                    </span>
+                  )}
+              </div>
+              <dl className="grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <dt className="font-semibold text-text-secondary">Prep by</dt>
+                  <dd className="text-sm font-bold text-primary-dark">
+                    {order.delivery_pickup_ready_at ? formatTime(order.delivery_pickup_ready_at) : '—'}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-semibold text-text-secondary">Courier ETA</dt>
+                  <dd className="text-sm font-bold text-primary-dark">
+                    {order.delivery_pickup_eta ? formatTime(order.delivery_pickup_eta) : '—'}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-semibold text-text-secondary">Customer ETA</dt>
+                  <dd className="text-sm font-bold text-primary-dark">
+                    {order.delivery_dropoff_eta ? formatTime(order.delivery_dropoff_eta) : '—'}
+                  </dd>
+                </div>
+              </dl>
+              {order.delivery_status === 'FAILED' && (
+                <button
+                  type="button"
+                  onClick={async (e) => {
+                    stop(e);
+                    setRetrying(true);
+                    try {
+                      await onRetryCourier(order);
+                    } finally {
+                      setRetrying(false);
+                    }
+                  }}
+                  disabled={retrying}
+                  className="mt-2 inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl border-2 border-red-300 bg-white px-3 text-sm font-bold text-red-700 hover:bg-red-50 disabled:opacity-60"
+                >
+                  {retrying ? <Spinner size="sm" /> : <RotateCcw size={16} />}
+                  Retry courier request
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Contact details — the kitchen needs a way to reach the customer
               about a missing item or a note it cannot fulfil. */}
           {(customerPhone || customerEmail) && (
@@ -280,7 +345,7 @@ function KanbanCard({
             ))}
           </div>
 
-          {order.is_priority && order.priority_reason && (
+          {!!order.is_priority && order.priority_reason && (
             <div className="border-t border-red-200 bg-red-50 px-4 py-2">
               <p className="text-sm text-red-800">
                 <strong>Sent back:</strong> {order.priority_reason}
@@ -295,11 +360,16 @@ function KanbanCard({
           <span className="flex items-center gap-1.5 truncate font-semibold text-primary-dark">
             <User size={14} className="shrink-0 text-text-secondary" />
             {customerName}
-            {order.is_priority && <Flame size={14} className="shrink-0 text-red-600" />}
+            {!!order.is_priority && <Flame size={14} className="shrink-0 text-red-600" />}
           </span>
           <div className="flex shrink-0 items-center gap-2">
             {/* Quick indicators so a collapsed card still signals that there is
                 something to read before starting the order. */}
+            {isDelivery && order.delivery_status === 'FAILED' && (
+              <span className="inline-flex items-center gap-0.5 text-red-700" title="Courier request failed">
+                <AlertTriangle size={14} />
+              </span>
+            )}
             {orderComment && (
               <span className="inline-flex items-center gap-0.5 text-accent-hover" title="Customer note">
                 <MessageSquare size={14} />
@@ -360,6 +430,7 @@ function KanbanColumn({
   onAdvance,
   onPrioritize,
   onCancel,
+  onRetryCourier,
 }: {
   column: KitchenColumn;
   orders: KitchenOrder[];
@@ -370,6 +441,7 @@ function KanbanColumn({
   onAdvance: (id: number, nextStatus: string) => Promise<void>;
   onPrioritize: (order: KitchenOrder) => void;
   onCancel: (order: KitchenOrder) => void;
+  onRetryCourier: (order: KitchenOrder) => Promise<void>;
 }) {
   const Icon = column.icon;
   return (
@@ -407,6 +479,7 @@ function KanbanColumn({
               onAdvance={onAdvance}
               onPrioritize={onPrioritize}
               onCancel={onCancel}
+              onRetryCourier={onRetryCourier}
             />
           ))
         )}
@@ -534,6 +607,8 @@ export default function KitchenBoard() {
       refetchAll();
     },
     order_canceled: refetchAll,
+    // Courier status / ETA changes pushed from the provider webhook.
+    delivery_updated: refetchAll,
   });
 
   // Live kitchen board: poll every 30s in addition to socket pushes.
@@ -546,6 +621,19 @@ export default function KitchenBoard() {
     async (orderId: number, newStatus: string) => {
       await api.patch(`/orders/${orderId}/status`, { status: newStatus }, token);
       setSelectedOrderId((prev) => (prev === orderId ? null : prev));
+      refetchAll();
+    },
+    [token, refetchAll],
+  );
+
+  const retryCourier = useCallback(
+    async (order: KitchenOrder) => {
+      try {
+        await api.post(`/delivery/orders/${order.id}/dispatch`, undefined, token);
+        setToast({ message: `Courier requested for order ${formatOrderNumber(order)}.` });
+      } catch (err) {
+        setToast({ message: err instanceof ApiError ? err.message : 'Could not request a courier.' });
+      }
       refetchAll();
     },
     [token, refetchAll],
@@ -664,6 +752,7 @@ export default function KitchenBoard() {
               onAdvance={advanceStatus}
               onPrioritize={openPriorityModal}
               onCancel={openCancelModal}
+              onRetryCourier={retryCourier}
             />
           ))}
         </div>

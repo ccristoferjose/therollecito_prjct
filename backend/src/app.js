@@ -18,6 +18,10 @@ const promoCampaignRoutes = require('./modules/promo-campaign/promo-campaign.rou
 const uploadRoutes = require('./modules/upload/upload.routes');
 const dashboardRoutes = require('./modules/dashboard/dashboard.routes');
 const servicePeriodRoutes = require('./modules/service-period/service-period.routes');
+const {
+  router: deliveryRoutes,
+  webhookRouter: deliveryWebhookRoutes,
+} = require('./modules/delivery/delivery.routes');
 
 const app = express();
 
@@ -29,6 +33,8 @@ app.use(cors({ origin: env.cors.origin, credentials: true }));
 
 // Stripe webhook needs raw body — mount BEFORE json parser
 app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
+// Delivery provider webhooks are HMAC-signed over the raw bytes too.
+app.use('/api/webhooks', express.raw({ type: '*/*', limit: '1mb' }));
 
 app.use(express.json({ limit: '10mb' }));
 
@@ -47,6 +53,8 @@ app.use('/api/promotions', promotionRoutes);
 app.use('/api/promo-campaigns', promoCampaignRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/delivery', deliveryRoutes);
+app.use('/api/webhooks', deliveryWebhookRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => {

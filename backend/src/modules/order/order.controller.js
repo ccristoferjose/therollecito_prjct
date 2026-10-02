@@ -9,6 +9,14 @@ const create = asyncHandler(async (req, res) => {
     guestPhone: req.body.guest_phone,
     pickupTime: req.body.pickup_time,
     notes: req.body.notes,
+    fulfillmentType: req.body.fulfillment_type || 'PICKUP',
+    delivery: req.body.fulfillment_type === 'DELIVERY'
+      ? {
+          quoteId: req.body.delivery_quote_id,
+          phone: req.body.delivery_phone,
+          notes: req.body.delivery_notes,
+        }
+      : null,
   });
   res.status(201).json(order);
 });
@@ -93,6 +101,9 @@ const simulatePay = asyncHandler(async (req, res) => {
   ]);
 
   const updated = await orderService.getById(orderId);
+  if (updated?.fulfillment_type === 'DELIVERY') {
+    require('../delivery/delivery.service').dispatchInBackground(orderId);
+  }
   res.json(updated);
 });
 
