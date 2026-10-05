@@ -19,10 +19,14 @@ router.put(
   requireAuth,
   requireRole('admin'),
   [
-    body('min_order_amount').isFloat({ min: 0, max: 10000 })
+    body('min_order_amount').optional().isFloat({ min: 0, max: 10000 })
       .withMessage('Minimum order must be between $0 and $10,000.'),
-    body('customer_fee_percent').isFloat({ min: 0, max: 100 })
+    body('customer_fee_percent').optional().isFloat({ min: 0, max: 100 })
       .withMessage('Customer share must be between 0% and 100%.'),
+    body('fee_split_mode').optional().isIn(['PERCENT', 'FLAT'])
+      .withMessage('Split mode must be PERCENT or FLAT.'),
+    body('restaurant_flat_amount').optional().isFloat({ min: 0, max: 100 })
+      .withMessage('Restaurant amount must be between $0 and $100.'),
     validateRequest,
   ],
   deliveryController.updateSettings
