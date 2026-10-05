@@ -6,28 +6,41 @@
  * delivery.customer_delivery_fee) and this is the only place that derives one
  * from the other.
  *
- * Rule (admin-configurable, see delivery.settings.js): the customer pays
- * `customerFeePercent` of the provider fee and the restaurant covers the rest.
- *   100 -> customer pays everything      50 -> 50 / 50
- *    40 -> customer 40 %, restaurant 60 %  0 -> free delivery
+ * Two admin-configurable rules (see delivery.settings.js):
  *
- * All amounts are integer cents to avoid float drift. The customer's share is
- * rounded to the nearest cent; the restaurant covers exactly the remainder, so
- * the two always add up to the provider fee.
+ *   PERCENT  the customer pays `customerFeePercent` of the provider fee.
+ *              100 -> customer pays everything      50 -> 50 / 50
+ *               40 -> customer 40 %, restaurant 60 %  0 -> free delivery
+ *
+ *   FLAT     the restaurant covers up to `restaurantFlatAmount` dollars and the
+ *            customer pays the rest, never below $0.
+ *              fee $10.99, flat $3.00 -> customer $7.99, restaurant $3.00
+ *              fee  $2.50, flat $3.00 -> customer $0.00, restaurant $2.50
+ *
+ * All amounts are integer cents to avoid float drift. Customer + restaurant
+ * always add up to exactly the provider fee.
  *
  * @param {object} input
  * @param {number} input.providerFeeCents
- * @param {{ customerFeePercent: number }} [input.settings]
+ * @param {{ feeSplitMode?: 'PERCENT' | 'FLAT', customerFeePercent?: number, restaurantFlatAmount?: number }} [input.settings]
  * @returns {{ providerFeeCents: number, customerFeeCents: number, subsidyCents: number }}
  */
 function priceDelivery({ providerFeeCents, settings }) {
   const provider = Math.max(0, Math.round(providerFeeCents));
-  const percent = Math.min(100, Math.max(0, Number(settings?.customerFeePercent ?? 100)));
-  const customerFeeCents = Math.round((provider * percent) / 100);
+
+  let subsidyCents;
+  if (settings?.feeSplitMode === 'FLAT') {
+    const flatCents = Math.max(0, Math.round(Number(settings.restaurantFlatAmount ?? 0) * 100));
+    subsidyCents = Math.min(provider, flatCents);
+  } else {
+    const percent = Math.min(100, Math.max(0, Number(settings?.customerFeePercent ?? 100)));
+    subsidyCents = provider - Math.round((provider * percent) / 100);
+  }
+
   return {
     providerFeeCents: provider,
-    customerFeeCents,
-    subsidyCents: provider - customerFeeCents,
+    customerFeeCents: provider - subsidyCents,
+    subsidyCents,
   };
 }
 

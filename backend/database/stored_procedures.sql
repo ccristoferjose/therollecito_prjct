@@ -3607,9 +3607,10 @@ BEGIN
   SELECT * FROM delivery WHERE order_id = p_order_id;
 END //
 
--- ---- Delivery settings (migration 010) --------------------------------------
--- One global row: minimum order for delivery + the customer's share of the
--- provider fee. The restaurant covers the remainder.
+-- ---- Delivery settings (migrations 010, 011) --------------------------------
+-- One global row: minimum order for delivery + how the provider fee is split.
+--   PERCENT: customer pays customer_fee_percent of the fee.
+--   FLAT:    restaurant covers up to restaurant_flat_amount; customer pays the rest.
 
 DROP PROCEDURE IF EXISTS sp_delivery_settings_get //
 CREATE PROCEDURE sp_delivery_settings_get()
@@ -3619,6 +3620,7 @@ BEGIN
 
   SELECT s.min_order_amount, s.customer_fee_percent,
          (100 - s.customer_fee_percent) AS restaurant_fee_percent,
+         s.fee_split_mode, s.restaurant_flat_amount,
          s.updated_at, s.updated_by,
          CONCAT_WS(' ', u.first_name, u.last_name) AS updated_by_name
     FROM delivery_settings s
@@ -3628,9 +3630,11 @@ END //
 
 DROP PROCEDURE IF EXISTS sp_delivery_settings_update //
 CREATE PROCEDURE sp_delivery_settings_update(
-  IN p_min_order_amount     DECIMAL(10, 2),
-  IN p_customer_fee_percent DECIMAL(5, 2),
-  IN p_updated_by           INT UNSIGNED
+  IN p_min_order_amount       DECIMAL(10, 2),
+  IN p_customer_fee_percent   DECIMAL(5, 2),
+  IN p_fee_split_mode         VARCHAR(10),
+  IN p_restaurant_flat_amount DECIMAL(10, 2),
+  IN p_updated_by             INT UNSIGNED
 )
 BEGIN
   IF p_min_order_amount IS NULL OR p_min_order_amount < 0 OR p_min_order_amount > 10000 THEN
@@ -3639,13 +3643,23 @@ BEGIN
   IF p_customer_fee_percent IS NULL OR p_customer_fee_percent < 0 OR p_customer_fee_percent > 100 THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Customer share must be between 0% and 100%.';
   END IF;
+  IF p_fee_split_mode IS NULL OR p_fee_split_mode NOT IN ('PERCENT', 'FLAT') THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Split mode must be PERCENT or FLAT.';
+  END IF;
+  IF p_restaurant_flat_amount IS NULL OR p_restaurant_flat_amount < 0 OR p_restaurant_flat_amount > 100 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Restaurant amount must be between $0 and $100.';
+  END IF;
 
-  INSERT INTO delivery_settings (id, min_order_amount, customer_fee_percent, updated_by)
-  VALUES (1, p_min_order_amount, p_customer_fee_percent, p_updated_by)
+  INSERT INTO delivery_settings
+    (id, min_order_amount, customer_fee_percent, fee_split_mode, restaurant_flat_amount, updated_by)
+  VALUES
+    (1, p_min_order_amount, p_customer_fee_percent, p_fee_split_mode, p_restaurant_flat_amount, p_updated_by)
   ON DUPLICATE KEY UPDATE
-    min_order_amount     = VALUES(min_order_amount),
-    customer_fee_percent = VALUES(customer_fee_percent),
-    updated_by           = VALUES(updated_by);
+    min_order_amount       = VALUES(min_order_amount),
+    customer_fee_percent   = VALUES(customer_fee_percent),
+    fee_split_mode         = VALUES(fee_split_mode),
+    restaurant_flat_amount = VALUES(restaurant_flat_amount),
+    updated_by             = VALUES(updated_by);
 
   CALL sp_delivery_settings_get();
 END //

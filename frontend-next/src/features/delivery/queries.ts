@@ -11,12 +11,18 @@ export function getDeliveryStatus(): Promise<{ available: boolean; minOrderAmoun
   return api.get('/delivery/status');
 }
 
+export type FeeSplitMode = 'PERCENT' | 'FLAT';
+
 /** Admin: delivery pricing settings. */
 export interface DeliverySettings {
   minOrderAmount: number;
+  /** PERCENT: customer pays customerFeePercent. FLAT: restaurant covers restaurantFlatAmount. */
+  feeSplitMode: FeeSplitMode;
   /** Share of the provider fee the customer pays; the restaurant covers the rest. */
   customerFeePercent: number;
   restaurantFeePercent: number;
+  /** Dollars of the provider fee the restaurant covers (FLAT mode). */
+  restaurantFlatAmount: number;
   updatedAt: string | null;
   updatedByName: string | null;
 }
@@ -26,12 +32,22 @@ export function getDeliverySettings(token: string | null): Promise<DeliverySetti
 }
 
 export function saveDeliverySettings(
-  settings: { minOrderAmount: number; customerFeePercent: number },
+  settings: {
+    minOrderAmount: number;
+    feeSplitMode: FeeSplitMode;
+    customerFeePercent: number;
+    restaurantFlatAmount: number;
+  },
   token: string | null,
 ): Promise<DeliverySettings> {
   return api.put(
     '/delivery/settings',
-    { min_order_amount: settings.minOrderAmount, customer_fee_percent: settings.customerFeePercent },
+    {
+      min_order_amount: settings.minOrderAmount,
+      fee_split_mode: settings.feeSplitMode,
+      customer_fee_percent: settings.customerFeePercent,
+      restaurant_flat_amount: settings.restaurantFlatAmount,
+    },
     token,
   );
 }

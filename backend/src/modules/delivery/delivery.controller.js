@@ -12,10 +12,16 @@ const getSettings = asyncHandler(async (_req, res) => {
 });
 
 const updateSettings = asyncHandler(async (req, res) => {
+  // Fields left out keep their current value, so an older admin page that only
+  // knows about the percentage cannot reset the flat amount (or vice versa).
+  const current = await deliverySettings.getSettings({ fresh: true });
+  const pick = (key, fallback) => (req.body[key] !== undefined ? req.body[key] : fallback);
   const result = await deliverySettings.updateSettings(
     {
-      minOrderAmount: req.body.min_order_amount,
-      customerFeePercent: req.body.customer_fee_percent,
+      minOrderAmount: pick('min_order_amount', current.minOrderAmount),
+      customerFeePercent: pick('customer_fee_percent', current.customerFeePercent),
+      feeSplitMode: pick('fee_split_mode', current.feeSplitMode),
+      restaurantFlatAmount: pick('restaurant_flat_amount', current.restaurantFlatAmount),
     },
     req.user?.user_id,
   );
