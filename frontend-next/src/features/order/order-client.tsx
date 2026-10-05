@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ShoppingBag, Plus, MapPin, RefreshCw, Clock } from 'lucide-react';
@@ -38,6 +38,15 @@ export default function OrderClient() {
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<MenuItemOptionValue[]>([]);
   const [activeCategory, setActiveCategory] = useState<number | null>(null);
+  // Continuous menu: every category is rendered as its own section, one after
+  // another, so reaching the end of "Coffees" simply continues into the next
+  // category. The chips jump to a section and follow the scroll position.
+  const sectionRefs = useRef(new Map<number, HTMLElement>());
+  const chipRefs = useRef(new Map<number, HTMLButtonElement>());
+  const chipBarRef = useRef<HTMLDivElement>(null);
+  // While a chip-initiated smooth scroll is running, the scroll spy must not
+  // fight it by highlighting every category it passes.
+  const jumpingUntil = useRef(0);
 
   const effectiveLocationId = urlLocationId ? Number(urlLocationId) : cartLocationId;
 
@@ -89,6 +98,61 @@ export default function OrderClient() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [menuData]);
+
+  // Scroll spy: the active chip is the last section whose top has passed the
+  // sticky header + chip bar. rAF-throttled; passive listener.
+  useEffect(() => {
+    const cats = menuData?.categories;
+    if (!cats?.length) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      if (Date.now() < jumpingUntil.current) return;
+      const offset = (chipBarRef.current?.getBoundingClientRect().bottom ?? 0) + 24;
+      const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4;
+      let current = cats[0].id;
+      for (const cat of cats) {
+        const el = sectionRefs.current.get(cat.id);
+        if (el && el.getBoundingClientRect().top <= offset) current = cat.id;
+      }
+      // A short last category may never reach the top: at the very bottom of
+      // the page it is the one being read.
+      if (atBottom) current = cats[cats.length - 1].id;
+      setActiveCategory((prev) => (prev === current ? prev : current));
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [menuData]);
+
+  // Keep the active chip visible inside the horizontally scrolling chip bar.
+  // scrollTo on the bar (not scrollIntoView) so the page itself never moves.
+  useEffect(() => {
+    if (activeCategory == null) return;
+    const bar = chipBarRef.current;
+    const chip = chipRefs.current.get(activeCategory);
+    if (!bar || !chip) return;
+    const left = chip.offsetLeft - bar.clientWidth / 2 + chip.clientWidth / 2;
+    bar.scrollTo({ left: Math.max(0, left), behavior: 'smooth' });
+  }, [activeCategory]);
+
+  const jumpToCategory = useCallback((categoryId: number) => {
+    const el = sectionRefs.current.get(categoryId);
+    if (!el) return;
+    setActiveCategory(categoryId);
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    jumpingUntil.current = Date.now() + (reduceMotion ? 50 : 800);
+    el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+    // Move keyboard / screen-reader focus to the category heading too.
+    el.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
+  }, []);
 
   function confirmLocationChange() {
     if (pendingLocationId !== null) setLocation(pendingLocationId);
@@ -160,7 +224,10 @@ export default function OrderClient() {
   const options = menuData?.options || [];
   const optionValues = menuData?.optionValues || [];
 
-  const filteredItems = activeCategory ? items.filter((i) => i.category_id === activeCategory) : items;
+  // Each category's items, in menu order. Categories with no items are skipped.
+  const sections = categories
+    .map((cat) => ({ cat, items: items.filter((i) => i.category_id === cat.id) }))
+    .filter((section) => section.items.length > 0);
   const getItemOptions = (itemId: number) => options.filter((o) => o.item_id === itemId);
   const getOptionValues = (optionId: number) => optionValues.filter((v) => v.item_option_id === optionId);
 
@@ -251,73 +318,108 @@ export default function OrderClient() {
         />
       )}
 
-      {!refreshing && categories.length > 0 && (
-        <div role="group" aria-label={t.a11y.categories} className="mb-6 flex gap-2 overflow-x-auto pb-3">
-          {categories.map((cat) => (
-            <button
-              key={cat.id}
-              type="button"
-              aria-pressed={activeCategory === cat.id}
-              onClick={() => setActiveCategory(cat.id)}
-              className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-                activeCategory === cat.id
-                  ? 'bg-primary text-white'
-                  : 'border border-border bg-surface text-text-secondary hover:border-primary/40'
-              }`}
-            >
-              {cat.name}
-            </button>
-          ))}
-        </div>
+      {/* Category chips: sticky under the site header (h-16), so they stay in
+          reach while scrolling the whole menu. They jump to a section; the
+          highlighted chip follows whichever section is being read. */}
+      {!refreshing && sections.length > 1 && (
+        <nav
+          aria-label={t.a11y.categories}
+          className="sticky top-16 z-30 -mx-4 mb-6 border-b border-border/60 bg-background/95 px-4 py-3 backdrop-blur"
+        >
+          <div ref={chipBarRef} className="flex gap-2 overflow-x-auto">
+            {sections.map(({ cat }) => (
+              <button
+                key={cat.id}
+                ref={(el) => {
+                  if (el) chipRefs.current.set(cat.id, el);
+                  else chipRefs.current.delete(cat.id);
+                }}
+                type="button"
+                aria-current={activeCategory === cat.id ? 'true' : undefined}
+                onClick={() => jumpToCategory(cat.id)}
+                className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition-colors ${
+                  activeCategory === cat.id
+                    ? 'bg-primary text-white'
+                    : 'border border-border bg-surface text-text-secondary hover:border-primary/40'
+                }`}
+              >
+                {cat.name}
+              </button>
+            ))}
+          </div>
+        </nav>
       )}
 
-      {refreshing ? null : filteredItems.length === 0 ? (
-        <EmptyState title={t.menu.noItems} description={t.menu.noItemsDesc} />
+      {refreshing ? null : sections.length === 0 ? (
+        !menuError && <EmptyState title={t.menu.noItems} description={t.menu.noItemsDesc} />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredItems.map((item) => (
-            <Card
-              key={item.id}
-              className="relative cursor-pointer transition-colors hover:border-primary/40 focus-within:border-primary/40"
+        <div className="space-y-10">
+          {sections.map(({ cat, items: catItems }) => (
+            <section
+              key={cat.id}
+              ref={(el) => {
+                if (el) sectionRefs.current.set(cat.id, el);
+                else sectionRefs.current.delete(cat.id);
+              }}
+              aria-labelledby={`menu-cat-${cat.id}`}
+              // Lands below the sticky header + chip bar when jumped to.
+              className="scroll-mt-36"
             >
-              {/* 4:3 of the card width rather than a fixed height. At the 2-up
-                  breakpoint a card is ~480px wide, so the old h-32 letterboxed
-                  every photo to roughly 3.75:1 and cropped the food out. */}
-              <div className="mb-3 flex aspect-[4/3] items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-primary-light to-primary/10">
-                {item.image_url ? (
-                  // alt="": the product name is the heading right below, so
-                  // repeating it here would make screen readers read it twice.
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={item.image_url} alt="" className="h-full w-full object-cover" loading="lazy" />
-                ) : (
-                  <span className="text-4xl" aria-hidden="true">🥐</span>
-                )}
+              <h2
+                id={`menu-cat-${cat.id}`}
+                tabIndex={-1}
+                className="mb-4 text-xl font-bold text-primary-dark focus:outline-none"
+              >
+                {cat.name}
+              </h2>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {catItems.map((item) => (
+                  <Card
+                    key={item.id}
+                    className="relative cursor-pointer transition-colors hover:border-primary/40 focus-within:border-primary/40"
+                  >
+                    {/* 4:3 of the card width rather than a fixed height. At the 2-up
+                        breakpoint a card is ~480px wide, so the old h-32 letterboxed
+                        every photo to roughly 3.75:1 and cropped the food out. */}
+                    <div className="mb-3 flex aspect-[4/3] items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-primary-light to-primary/10">
+                      {item.image_url ? (
+                        // alt="": the product name is the heading right below, so
+                        // repeating it here would make screen readers read it twice.
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={item.image_url} alt="" className="h-full w-full object-cover" loading="lazy" />
+                      ) : (
+                        <span className="text-4xl" aria-hidden="true">🥐</span>
+                      )}
+                    </div>
+                    {/* h3: items now sit under their category's h2. */}
+                    <h3 className="font-semibold text-text">{item.name}</h3>
+                    {item.description && (
+                      <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{item.description}</p>
+                    )}
+                    <div className="mt-3 flex items-center justify-between">
+                      <span className="text-lg font-bold text-primary-dark">{formatCurrency(item.price)}</span>
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        aria-label={fmt(t.a11y.addItem, { name: item.name })}
+                        aria-haspopup="dialog"
+                        onClick={() => {
+                          setSelectedItem(item);
+                          setSelectedOptions([]);
+                        }}
+                        // active:scale-100 — a transform would make this button the
+                        // containing block for its ::after mid-click, shrinking the
+                        // card-wide hit area under the pointer and losing the click.
+                        className="active:scale-100 after:absolute after:inset-0 after:rounded-2xl after:content-['']"
+                      >
+                        <Plus size={14} aria-hidden="true" /> {t.menu.add}
+                      </Button>
+                    </div>
+                  </Card>
+                ))}
               </div>
-              <h2 className="font-semibold text-text">{item.name}</h2>
-              {item.description && (
-                <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{item.description}</p>
-              )}
-              <div className="mt-3 flex items-center justify-between">
-                <span className="text-lg font-bold text-primary-dark">{formatCurrency(item.price)}</span>
-                <Button
-                  type="button"
-                  variant="primary"
-                  size="sm"
-                  aria-label={fmt(t.a11y.addItem, { name: item.name })}
-                  aria-haspopup="dialog"
-                  onClick={() => {
-                    setSelectedItem(item);
-                    setSelectedOptions([]);
-                  }}
-                  // active:scale-100 — a transform would make this button the
-                  // containing block for its ::after mid-click, shrinking the
-                  // card-wide hit area under the pointer and losing the click.
-                  className="active:scale-100 after:absolute after:inset-0 after:rounded-2xl after:content-['']"
-                >
-                  <Plus size={14} aria-hidden="true" /> {t.menu.add}
-                </Button>
-              </div>
-            </Card>
+            </section>
           ))}
         </div>
       )}
