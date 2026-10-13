@@ -16,6 +16,12 @@ export function useSocket(
   listeners?: Listeners,
 ) {
   const socketRef = useRef<Socket | null>(null);
+  const listenersRef = useRef(listeners);
+  const events = JSON.stringify(Object.keys(listeners || {}).sort());
+
+  useEffect(() => {
+    listenersRef.current = listeners;
+  }, [listeners]);
 
   useEffect(() => {
     const base = env.socketUrl || 'http://localhost:3001';
@@ -25,17 +31,15 @@ export function useSocket(
     });
     socketRef.current = socket;
 
-    if (listeners) {
-      for (const [event, handler] of Object.entries(listeners)) {
-        socket.on(event, handler);
-      }
+    for (const event of JSON.parse(events) as string[]) {
+      socket.on(event, (...args: unknown[]) => listenersRef.current?.[event]?.(...args));
     }
 
     return () => {
       socket.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [namespace, JSON.stringify(query)]);
+  }, [namespace, JSON.stringify(query), events]);
 
   return socketRef;
 }

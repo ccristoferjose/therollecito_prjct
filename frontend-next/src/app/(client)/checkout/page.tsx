@@ -166,6 +166,7 @@ function StripePaymentForm({
 }) {
   const stripe = useStripe();
   const elements = useElements();
+  const router = useRouter();
   const [processing, setProcessing] = useState(false);
   const [payError, setPayError] = useState<string | null>(null);
 
@@ -195,13 +196,17 @@ function StripePaymentForm({
       return;
     }
 
-    if (paymentIntent && paymentIntent.status === 'succeeded') {
+    if (paymentIntent && ['succeeded', 'processing'].includes(paymentIntent.status)) {
       try {
-        await api.post('/payments/confirm', { order_id: orderId, payment_intent_id: paymentIntent.id });
+        const confirmed = await api.post<{ status: string }>('/payments/confirm', { order_id: orderId, payment_intent_id: paymentIntent.id });
+        if (confirmed.status === 'PAID') {
+          onSuccess();
+          return;
+        }
       } catch (confirmErr) {
-        console.warn('[checkout] /payments/confirm failed, relying on webhook:', confirmErr);
+        console.warn('[checkout] Confirmation needs another check:', confirmErr);
       }
-      onSuccess();
+      router.replace(`/track/${trackingCode}?payment_intent=${encodeURIComponent(paymentIntent.id)}`);
     } else {
       setPayError('Payment was not completed. Please try again.');
       setProcessing(false);

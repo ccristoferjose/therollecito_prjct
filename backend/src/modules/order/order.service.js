@@ -173,8 +173,10 @@ async function cancel(orderId, reason) {
   }
 
   let refund = null;
-  // Only active PAID/PREPARING/READY orders have a charge to refund.
-  // CREATED orders never had payment collected.
+  // Redirect payments can succeed before the webhook records a payment row.
+  if (current.status_name === 'CREATED') {
+    refund = await paymentService.refundOrder(orderId, { allowUnpaid: true });
+  }
   if (['PAID', 'PREPARING', 'READY'].includes(current.status_name)) {
     refund = await paymentService.refundOrder(orderId);
   }

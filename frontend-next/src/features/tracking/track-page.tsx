@@ -11,11 +11,12 @@ import {
 import { useLang } from '@/providers/lang-provider';
 import { useAnnounce } from '@/providers/announcer-provider';
 import { useClientAuth } from '@/providers/client-auth-provider';
+import { useCart } from '@/providers/cart-provider';
 import { useSocket } from '@/lib/hooks/use-socket';
 import { useFetch } from '@/lib/hooks/use-fetch';
 import { api, ApiError } from '@/lib/api/client';
 import { formatCurrency, formatTime, formatDate, formatOrderNumber } from '@/lib/utils/format';
-import { getGuestOrders, removeGuestOrder } from '@/lib/utils/guest-orders';
+import { addGuestOrder, getGuestOrders, removeGuestOrder } from '@/lib/utils/guest-orders';
 import Card from '@/components/ui/card';
 import Button, { buttonVariants } from '@/components/ui/button';
 import Input from '@/components/ui/input';
@@ -176,6 +177,11 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showDirections, setShowDirections] = useState(false);
+  const [paymentMessage, setPaymentMessage] = useState<string | null>(null);
+  const [paymentFailed, setPaymentFailed] = useState(false);
+  const [checkingPayment, setCheckingPayment] = useState(false);
+  const paymentCheck = useRef(false);
+  const { clear } = useCart();
   const announce = useAnnounce();
   const lastStatus = useRef<string | null>(null);
 
@@ -185,6 +191,43 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
   const fetchOrder = useCallback(async () => {
     try {
       const orderData = await api.get<Order>(`/orders/track/${trackingCode}`);
+      // Never trust redirect_status: the server retrieves the intent from Stripe
+      // and verifies that it belongs to this order before marking it paid.
+      const returnUrl = new URL(window.location.href);
+      const intentId = returnUrl.searchParams.get('payment_intent');
+      if (intentId && !paymentCheck.current) {
+        paymentCheck.current = true;
+        setCheckingPayment(true);
+        setPaymentMessage('Checking your payment. Please do not pay again.');
+        try {
+          const confirmed = await api.post<{ status: string }>('/payments/confirm', {
+            order_id: orderData.id, payment_intent_id: intentId,
+          });
+          if (confirmed.status === 'PAID') {
+            Object.assign(orderData, await api.get<Order>(`/orders/track/${trackingCode}`));
+            addGuestOrder(trackingCode);
+            clear();
+            for (const key of ['payment_intent', 'payment_intent_client_secret', 'redirect_status']) {
+              returnUrl.searchParams.delete(key);
+            }
+            window.history.replaceState(window.history.state, '', `${returnUrl.pathname}${returnUrl.search}${returnUrl.hash}`);
+            setPaymentMessage(null);
+            setPaymentFailed(false);
+          } else {
+            const failed = ['requires_payment_method', 'canceled'].includes(confirmed.status);
+            setPaymentFailed(failed);
+            setPaymentMessage(failed
+              ? 'Payment was not completed. Please try checkout again.'
+              : 'Your payment is still pending. Please check again before making another payment.');
+          }
+        } catch {
+          setPaymentMessage('We could not confirm your payment yet. You may have been charged. Check again or contact the store before paying again.');
+          setPaymentFailed(false);
+        } finally {
+          paymentCheck.current = false;
+          setCheckingPayment(false);
+        }
+      }
       const itemsData = await api.get<OrderItemsResponse>(`/orders/${orderData.id}/items`);
       setOrder(orderData);
       setItems(itemsData);
@@ -194,7 +237,7 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
     } finally {
       setLoading(false);
     }
-  }, [trackingCode]);
+  }, [trackingCode, clear]);
 
   useEffect(() => {
     fetchOrder();
@@ -244,6 +287,10 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
 
   const statusHeading = !order
     ? null
+    : order.status_name === 'CREATED'
+      ? 'Awaiting payment confirmation'
+      : order.status_name === 'CANCELED'
+        ? 'Order canceled'
     : isDelivery && deliveryEnded
       ? 'Delivery canceled'
       : isDelivery && deliveryStep >= 3
@@ -292,6 +339,18 @@ function OrderDetail({ trackingCode }: { trackingCode: string }) {
 
   return (
     <div className="space-y-6">
+      {paymentMessage && (
+        <Card>
+          <p role="status" className="text-sm text-text-secondary">{paymentMessage}</p>
+          {paymentFailed ? (
+            <Link href="/checkout" className={buttonVariants({ variant: 'primary', className: 'mt-3' })}>Try checkout again</Link>
+          ) : (
+            <Button type="button" className="mt-3" disabled={checkingPayment} onClick={() => void fetchOrder()}>
+              {checkingPayment ? 'Checking payment…' : 'Check payment again'}
+            </Button>
+          )}
+        </Card>
+      )}
       <Card className="py-8 text-center">
         <p className="mb-1 text-sm text-text-secondary">
           {t.tracking.order} {formatOrderNumber(order)}

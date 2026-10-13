@@ -11,7 +11,7 @@ import Input from '@/components/ui/input';
 import Card from '@/components/ui/card';
 
 export default function StaffLoginPage() {
-  const { login } = useStaffAuth();
+  const { login, sessionExpired } = useStaffAuth();
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -48,6 +48,7 @@ export default function StaffLoginPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {sessionExpired && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm text-warning-text">Your session expired. Please sign in again.</p>}
           <Input label="Email" type="email" placeholder="staff@therollecito.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
           <Input label="Password" type="password" placeholder="Enter password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           {error && <div className="rounded-lg border border-error/20 bg-red-50 p-3 text-sm text-error">{error}</div>}

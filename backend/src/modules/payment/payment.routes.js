@@ -20,7 +20,7 @@ router.post(
 // Stripe webhook (raw body — handled by express.raw in app.js)
 router.post('/webhook', paymentController.webhook);
 
-// Frontend fallback: called after stripe.confirmCardPayment succeeds so we
+// Frontend fallback: called after stripe.confirmPayment or a redirect return so we
 // don't rely solely on the webhook. Idempotent with the webhook path.
 router.post(
   '/confirm',

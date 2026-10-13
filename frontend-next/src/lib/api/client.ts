@@ -54,6 +54,9 @@ export async function apiRequest<T>(endpoint: string, options: RequestOptions = 
   });
 
   if (!res.ok) {
+    if (res.status === 401 && token && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('staff-session-unauthorized', { detail: { token } }));
+    }
     const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
     throw new ApiError(data.error || `Request failed (${res.status})`, res.status, data.code);
   }

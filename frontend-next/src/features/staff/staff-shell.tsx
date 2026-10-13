@@ -53,7 +53,7 @@ function FullScreenSpinner() {
 }
 
 export default function StaffShell({ children }: { children: React.ReactNode }) {
-  const { user, token, logout, isAuthenticated, hydrated } = useStaffAuth();
+  const { user, token, logout, isAuthenticated, hydrated, sessionExpired } = useStaffAuth();
   const router = useRouter();
   const pathname = usePathname();
   const { data: locations } = useFetch<Location[]>(token ? '/locations' : null, token);
@@ -64,9 +64,9 @@ export default function StaffShell({ children }: { children: React.ReactNode }) 
   // Route guard — only act once localStorage auth has been restored.
   useEffect(() => {
     if (!hydrated) return;
-    if (!isAuthenticated) router.replace('/staff/login');
+    if (!isAuthenticated) router.replace(sessionExpired ? '/staff/login?reason=session-expired' : '/staff/login');
     else if (wrongRole) router.replace('/staff/kitchen');
-  }, [hydrated, isAuthenticated, wrongRole, router]);
+  }, [hydrated, isAuthenticated, wrongRole, router, sessionExpired]);
 
   if (!hydrated || !isAuthenticated || wrongRole) return <FullScreenSpinner />;
 
