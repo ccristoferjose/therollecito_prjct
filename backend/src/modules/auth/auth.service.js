@@ -33,6 +33,10 @@ async function staffLogin(email, password) {
     throw new AppError('Invalid email or password.', 401);
   }
 
+  return staffSession(user);
+}
+
+function staffSession(user) {
   const token = jwt.sign(
     {
       user_id: user.id,
@@ -56,6 +60,17 @@ async function staffLogin(email, password) {
   };
 }
 
+async function refreshStaffSession(userId) {
+  // Recheck current account permissions rather than copying stale JWT claims.
+  const result = await db.call('sp_staff_list', []);
+  const rows = Array.isArray(result[0]) ? result[0] : result;
+  const user = rows.find((row) => Number(row.id) === Number(userId));
+  if (!user || !Number(user.is_active) || !['admin', 'manager'].includes(user.role_name)) {
+    throw new AppError('Staff session is no longer authorized. Please sign in again.', 401);
+  }
+  return staffSession(user);
+}
+
 /**
  * Firebase client auth: auto-create user if not exists, return user data.
  * Called by requireFirebaseAuth middleware — this is a helper if needed directly.
@@ -72,4 +87,4 @@ async function firebaseAuth(firebaseUid, email, firstName, lastName, phone) {
   return rows[0];
 }
 
-module.exports = { staffLogin, firebaseAuth };
+module.exports = { staffLogin, refreshStaffSession, firebaseAuth };

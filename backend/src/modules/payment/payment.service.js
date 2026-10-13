@@ -79,7 +79,7 @@ async function handleWebhook(rawBody, signature) {
     const orderRows = Array.isArray(orderResult[0]) ? orderResult[0] : orderResult;
     const order = orderRows[0];
 
-    if (order) {
+    if (order && ['PAID', 'PREPARING', 'READY', 'COMPLETED'].includes(order.status_name)) {
       const io = getIO();
       if (io) {
         io.of('/kitchen').to(`location_${order.location_id}`).emit('order_paid', {
@@ -100,7 +100,8 @@ async function handleWebhook(rawBody, signature) {
 
 /**
  * Fallback path called by the frontend immediately after a successful
- * stripe.confirmCardPayment(). Verifies the PaymentIntent with Stripe,
+ * stripe.confirmPayment(), or after returning from a redirect method.
+ * Verifies the PaymentIntent with Stripe,
  * then marks the order PAID. Idempotent: sp_order_mark_paid is safe to
  * call twice if the webhook also lands.
  */
@@ -112,11 +113,22 @@ async function confirmPayment(orderId, paymentIntentId) {
 
   const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
 
-  if (intent.status !== 'succeeded') {
-    throw new AppError(`PaymentIntent is ${intent.status}, not succeeded.`, 400);
-  }
   if (parseInt(intent.metadata.order_id, 10) !== parseInt(orderId, 10)) {
     throw new AppError('PaymentIntent does not belong to this order.', 400);
+  }
+  if (intent.status !== 'succeeded') {
+    return { order_id: parseInt(orderId, 10), status: intent.status };
+  }
+
+  const beforeResult = await db.call('sp_order_get', [orderId]);
+  const beforeRows = Array.isArray(beforeResult[0]) ? beforeResult[0] : beforeResult;
+  const before = beforeRows[0];
+  if (!before) throw new AppError('Order not found.', 404);
+  if (before.status_name === 'CANCELED') {
+    throw new AppError('This order was canceled. Please contact the store about your payment.', 409);
+  }
+  if (intent.currency !== 'usd' || intent.amount_received !== Math.round(Number(before.total_amount) * 100)) {
+    throw new AppError('Payment amount does not match this order. Please contact the store.', 409);
   }
 
   await db.call('sp_order_mark_paid', [
@@ -130,7 +142,7 @@ async function confirmPayment(orderId, paymentIntentId) {
   const orderRows = Array.isArray(orderResult[0]) ? orderResult[0] : orderResult;
   const order = orderRows[0];
 
-  if (order) {
+  if (order && ['PAID', 'PREPARING', 'READY', 'COMPLETED'].includes(order.status_name)) {
     const io = getIO();
     if (io) {
       io.of('/kitchen').to(`location_${order.location_id}`).emit('order_paid', {
@@ -153,14 +165,63 @@ async function confirmPayment(orderId, paymentIntentId) {
  * 'refunded'. Returns the refund record. Caller is responsible for
  * cancelling the order (sp_order_cancel) after this resolves.
  */
-async function refundOrder(orderId) {
-  if (!stripe) throw new AppError('Stripe not configured.', 500);
+async function refundOrder(orderId, { allowUnpaid = false } = {}) {
+  if (!stripe) {
+    if (allowUnpaid) return null;
+    throw new AppError('Stripe not configured.', 500);
+  }
 
   const payResult = await db.call('sp_payment_get_by_order', [orderId]);
   const payRows = Array.isArray(payResult[0]) ? payResult[0] : payResult;
   const payment = payRows[0];
 
-  if (!payment) {
+  if (!payment || allowUnpaid) {
+    if (allowUnpaid) {
+      const orderResult = await db.call('sp_order_get', [orderId]);
+      const orderRows = Array.isArray(orderResult[0]) ? orderResult[0] : orderResult;
+      const createdAt = new Date(orderRows[0]?.created_at).getTime();
+      if (!Number.isFinite(createdAt)) throw new AppError('Cannot verify payment history for this order.', 409);
+
+      // List rather than Search: Stripe Search is eventually consistent. Scan
+      // from before order creation, including all pages and all matching intents.
+      const intents = [];
+      for await (const intent of stripe.paymentIntents.list({
+        created: { gte: Math.max(0, Math.floor(createdAt / 1000) - 86400) }, limit: 100,
+      })) {
+        if (intent.metadata.order_id === String(orderId)) intents.push(intent);
+      }
+      // Stop future charges before canceling the order. Processing payments
+      // require reconciliation; never assume they are abandoned checkouts.
+      for (const intent of intents) {
+        if (intent.status === 'processing' || intent.status === 'requires_capture') {
+          throw new AppError('Payment is still processing. Check Stripe before canceling this order.', 409);
+        }
+      }
+      for (const intent of intents) {
+        if (!['succeeded', 'canceled'].includes(intent.status)) {
+          await stripe.paymentIntents.cancel(intent.id);
+        }
+      }
+      const refunds = [];
+      for (const intent of intents.filter((item) => item.status === 'succeeded')) {
+        const verified = await stripe.paymentIntents.retrieve(intent.id, { expand: ['latest_charge'] });
+        const charge = verified.latest_charge;
+        if (!charge || typeof charge === 'string') throw new AppError('Cannot verify charge for refund.', 502);
+        let refund = null;
+        if (!charge.refunded) {
+          refund = await stripe.refunds.create({ payment_intent: intent.id }, {
+            idempotencyKey: `order-cancel-refund:${orderId}:${intent.id}`,
+          });
+          if (!['succeeded', 'pending'].includes(refund.status)) {
+            throw new AppError(`Stripe refund failed with status ${refund.status}.`, 502);
+          }
+        }
+        await record({ orderId, stripePaymentIntentId: intent.id,
+          amount: intent.amount_received / 100, currency: intent.currency.toUpperCase(), status: 'refunded' });
+        refunds.push(refund ? { refund_id: refund.id, status: refund.status, amount: refund.amount / 100 } : { already_refunded: true });
+      }
+      return refunds.length ? { refunds } : null;
+    }
     throw new AppError('No payment found for this order — nothing to refund.', 404);
   }
   if (payment.status === 'refunded') {
@@ -169,6 +230,8 @@ async function refundOrder(orderId) {
 
   const refund = await stripe.refunds.create({
     payment_intent: payment.stripe_payment_intent_id,
+  }, {
+    idempotencyKey: `order-cancel-refund:${orderId}:${payment.stripe_payment_intent_id}`,
   });
 
   if (refund.status !== 'succeeded' && refund.status !== 'pending') {

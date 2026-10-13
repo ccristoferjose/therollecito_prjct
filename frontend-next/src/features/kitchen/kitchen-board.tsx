@@ -595,6 +595,7 @@ export default function KitchenBoard() {
   }, [soundEnabled]);
 
   useSocket('/kitchen', locationId ? { location_id: locationId } : undefined, {
+    connect: refetchAll,
     order_paid: () => {
       playNotification();
       refetchAll();
@@ -614,7 +615,16 @@ export default function KitchenBoard() {
   // Live kitchen board: poll every 30s in addition to socket pushes.
   useEffect(() => {
     const interval = setInterval(refetchAll, 30000);
-    return () => clearInterval(interval);
+    const onVisible = () => { if (document.visibilityState === 'visible') void refetchAll(); };
+    window.addEventListener('focus', refetchAll);
+    window.addEventListener('online', refetchAll);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', refetchAll);
+      window.removeEventListener('online', refetchAll);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [refetchAll]);
 
   const advanceStatus = useCallback(
@@ -702,6 +712,12 @@ export default function KitchenBoard() {
 
   return (
     <div className="-m-6 flex h-full flex-col">
+      {boardFetch.error && (
+        <div role="alert" className="border-b border-error/20 bg-red-50 px-6 py-3 text-sm text-error-text">
+          Orders could not refresh. Displayed orders may be out of date. Retrying automatically.
+          <button type="button" className="ml-3 underline" onClick={() => void refetchAll()}>Refresh now</button>
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-surface px-6 py-4">
         <div className="flex flex-wrap items-center gap-4">
           <h2 className="flex items-center gap-2 text-2xl font-extrabold text-primary-dark">

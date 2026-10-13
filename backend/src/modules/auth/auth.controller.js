@@ -19,4 +19,8 @@ const getMe = asyncHandler(async (req, res) => {
   res.json({ user: req.user });
 });
 
-module.exports = { staffLogin, getMe };
+const refreshStaffSession = asyncHandler(async (req, res) => {
+  res.json(await authService.refreshStaffSession(req.user.user_id));
+});
+
+module.exports = { staffLogin, refreshStaffSession, getMe };
